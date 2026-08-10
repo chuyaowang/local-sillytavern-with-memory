@@ -7,6 +7,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from qdrant_client.models import FieldCondition, Filter, MatchValue
 from mem0 import Memory
+from mem0.configs.prompts import ADDITIVE_EXTRACTION_PROMPT, generate_additive_extraction_prompt
+from mem0.memory.utils import extract_json, parse_messages, remove_code_blocks
 
 OLLAMA_BASE_URL = "http://ollama:11434"
 
@@ -60,6 +62,10 @@ class AddMemoryRequest(BaseModel):
     messages: list[dict]
     user_id: str
     agent_id: Optional[str] = None
+
+
+class ExtractionRawRequest(BaseModel):
+    messages: list[dict]
 
 
 class UpdateMemoryRequest(BaseModel):
@@ -140,6 +146,51 @@ def add_memory(req: AddMemoryRequest):
             shared_messages = [{"role": "user", "content": fact} for fact in shared_facts]
             memory.add(shared_messages, user_id=req.user_id, agent_id=SHARED_AGENT_ID, infer=False)
 
+    return result
+
+
+@app.post("/debug/extraction-raw")
+def extraction_raw(req: ExtractionRawRequest):
+    # Mirrors mem0's own extraction call (Memory._add_to_vector_store) so this
+    # exercises the same prompt/parse path a real /memories call takes.
+    # Surfaced separately because mem0 catches a JSON parse failure here and
+    # silently turns it into an empty result -- identical to "the model found
+    # nothing worth remembering". This endpoint reports the parse failure
+    # instead of swallowing it.
+    parsed_messages = parse_messages(req.messages)
+    user_prompt = generate_additive_extraction_prompt(new_messages=parsed_messages)
+
+    raw_response = memory.llm.generate_response(
+        messages=[
+            {"role": "system", "content": ADDITIVE_EXTRACTION_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
+        response_format={"type": "json_object"},
+    )
+
+    cleaned = remove_code_blocks(raw_response)
+    result = {"raw_response": raw_response, "cleaned_response": cleaned}
+
+    if not cleaned or not cleaned.strip():
+        result.update(valid_json=False, used_fallback=False, error="empty response", memory_count=0)
+        return result
+
+    try:
+        parsed = json.loads(cleaned, strict=False)
+        result.update(valid_json=True, used_fallback=False)
+    except json.JSONDecodeError:
+        try:
+            parsed = json.loads(extract_json(cleaned), strict=False)
+            result.update(valid_json=True, used_fallback=True)
+        except json.JSONDecodeError as e2:
+            result.update(valid_json=False, used_fallback=True, error=str(e2), memory_count=0)
+            return result
+
+    memory_list = parsed.get("memory") if isinstance(parsed, dict) else None
+    result.update(
+        has_memory_key=isinstance(memory_list, list),
+        memory_count=len(memory_list) if isinstance(memory_list, list) else 0,
+    )
     return result
 
 
