@@ -175,7 +175,10 @@ break the "internal services stay local" posture.
   standalone file — it relies on `roleplay-net` and the `ollama` service
   declared in the base file, so it's always run together:
   `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-  qdrant-prod mem0-prod sillytavern-prod`.
+  qdrant-prod mem0-prod sillytavern-prod`. The `Makefile` wraps this (and the
+  matching stop commands, careful to never stop the shared `ollama` service
+  when only one stack should go down) as `make dev-up`/`dev-down`/`prod-up`/
+  `prod-down`/`down`/`status` — that's the version actually worth remembering.
 - **Shared**: Ollama (GPU/VRAM is the scarce resource on a 6GB card — no
   reason to load the model twice) and the SillyTavern plugin/extension code
   (`sillytavern/plugins`, `sillytavern/extensions`, bind-mounted into both ST
