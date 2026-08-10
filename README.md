@@ -1,4 +1,4 @@
-# Local Roleplay Agent
+# Local SillyTavern with Memory Management
 
 This is a self-hosted roleplay/chat setup that runs entirely on your own hardware — local model, local memory, local everything. Nothing goes to a cloud API. You chat through SillyTavern, from this machine or from another device over Tailscale, and the system remembers things about you and your characters across conversations.
 
