@@ -1,10 +1,12 @@
 # Real SillyTavern config -- holds the basic auth password and the actual
 # Tailscale whitelist IPs. See config.yaml.example for a sanitized template.
 sillytavern/config/config.yaml
+sillytavern-prod/config/config.yaml
 
 # SillyTavern runtime data -- chat history, characters, cache, uploads, and
 # cookie-secret.txt. Pure runtime state, not reproducible setup config.
 sillytavern/data/
+sillytavern-prod/data/
 
 # Model weights -- large binaries, not source. Modelfiles (small text) are
 # tracked so the setup is reproducible; the GGUFs themselves are not.

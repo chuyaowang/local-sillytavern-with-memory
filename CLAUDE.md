@@ -167,6 +167,42 @@ break the "internal services stay local" posture.
      active character's name (`context.characters[context.characterId].name`)
      — both slugified.
 
+### Dev vs. prod environments
+
+- `docker-compose.yml` (`ollama`, `qdrant`, `mem0`, `sillytavern`) is the
+  development stack — where extension/plugin/mem0-service changes get tested.
+  `docker-compose.prod.yml` is an overlay for the real-use instance, not a
+  standalone file — it relies on `roleplay-net` and the `ollama` service
+  declared in the base file, so it's always run together:
+  `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+  qdrant-prod mem0-prod sillytavern-prod`.
+- **Shared**: Ollama (GPU/VRAM is the scarce resource on a 6GB card — no
+  reason to load the model twice) and the SillyTavern plugin/extension code
+  (`sillytavern/plugins`, `sillytavern/extensions`, bind-mounted into both ST
+  containers from the same host path). It's git-tracked source, not runtime
+  state, so there's nothing to contaminate — and it means a plugin fix
+  doesn't need a separate promotion step to reach prod.
+- **Duplicated**: Qdrant (`qdrant-prod` container, separate named volume
+  `qdrant_storage_prod`), mem0-service (`mem0-prod`, same image/build as
+  `mem0`, pointed at `qdrant-prod` instead of `qdrant`), and SillyTavern's
+  config/data (`sillytavern-prod/config/`, `sillytavern-prod/data/`,
+  gitignored the same way as the dev copies, own basic-auth credentials and
+  whitelist). `mem0-service/main.py` reads `QDRANT_HOST` from the environment
+  (default `qdrant`) specifically so the same built image serves either
+  stack without a code fork.
+- **Rejected**: a single shared mem0-service instance manually repointed at
+  whichever Qdrant is "active" via env var + restart. mem0-service is
+  stateless per request and has no way to know which Qdrant is prod vs. dev
+  — a manual toggle is exactly the kind of step that gets forgotten,
+  silently writing test data into the real store. Two always-running,
+  differently-named services fix the target by which container you're
+  talking to, not a mutable setting someone has to remember to flip.
+- Both SillyTavern instances are reachable over Tailscale, on different host
+  ports (`sillytavern` on `:8000`, `sillytavern-prod` on `:8010`) — a device
+  needs a whitelist entry in both `config.yaml` files to reach both.
+  `mem0-prod`/`qdrant-prod` stay on `127.0.0.1` only, same posture as the dev
+  copies, just on different ports (`8011`, `6343`/`6344`).
+
 ## Lessons learned (things that failed silently or non-obviously)
 
 - **Never mutate the `chat` array directly to inject "hidden" context.** An

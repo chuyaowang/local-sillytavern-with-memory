@@ -95,6 +95,8 @@ SillyTavern lives at `http://localhost:8000` on the local machine and can be acc
 
 The raw mem0 API docs are at `http://localhost:8001/docs`, and the Qdrant dashboard is at `http://localhost:6333/dashboard`. These two are for debugging only, you will unlikely need to access them.
 
+There's also an optional `docker-compose.prod.yml` overlay for running a second, fully isolated instance to separate development and actual use data — see [CLAUDE.md](CLAUDE.md) if you want to set one up.
+
 ## Third-party components
 
 This repo's own code is Apache-2.0 (see [LICENSE](LICENSE)), but it wires together several separately-licensed pieces you should know about if you're redistributing or building on this:

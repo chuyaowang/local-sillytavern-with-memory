@@ -1,4 +1,5 @@
 import json
+import os
 from typing import Optional
 
 from fastapi import FastAPI
@@ -8,6 +9,12 @@ from qdrant_client.models import FieldCondition, Filter, MatchValue
 from mem0 import Memory
 
 OLLAMA_BASE_URL = "http://ollama:11434"
+
+# Ollama is shared between the dev and prod stacks (GPU/VRAM is the scarce
+# resource, no reason to load the model twice), but each stack needs its own
+# Qdrant so memory data never crosses over -- QDRANT_HOST lets the same image
+# serve either one depending on which compose service sets it.
+QDRANT_HOST = os.environ.get("QDRANT_HOST", "qdrant")
 
 config = {
     "llm": {
@@ -28,7 +35,7 @@ config = {
         "provider": "qdrant",
         "config": {
             "collection_name": "roleplay_memories",
-            "host": "qdrant",
+            "host": QDRANT_HOST,
             "port": 6333,
             "embedding_model_dims": 768,  # nomic-embed-text output size
         },
