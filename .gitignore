@@ -17,3 +17,6 @@ models/*.gguf
 node_modules/
 __pycache__/
 *.pyc
+
+# Subagent-driven-development scratch workspace (ledgers, briefs, reports)
+.superpowers/
