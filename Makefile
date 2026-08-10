@@ -14,12 +14,18 @@ help:
 
 dev-up:
 	docker compose up -d
+	@echo ""
+	@echo "SillyTavern:    http://localhost:8000"
+	@echo "Memory manager: http://localhost:8001/ui/"
 
 dev-down:
 	docker compose stop $(DEV_SERVICES)
 
 prod-up:
 	$(COMPOSE) up -d $(PROD_SERVICES)
+	@echo ""
+	@echo "SillyTavern:    http://localhost:8010"
+	@echo "Memory manager: http://localhost:8011/ui/"
 
 prod-down:
 	$(COMPOSE) stop $(PROD_SERVICES)
