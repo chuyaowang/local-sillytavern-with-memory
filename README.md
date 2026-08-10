@@ -58,7 +58,7 @@ Quick sanity check that GPU passthrough actually works: `docker run --rm --gpus 
 
 ### Getting the app running
 
-**1. Bring your own model.** The model files aren't in this repo (they're multi-gigabytes). Drop one in `models/`, then point `models/Modelfile`'s `FROM` line at its filename. It should be a Gemma-family model, and it needs `num_ctx` set to at least 16384 — the memory extraction prompt alone is around 8,000 tokens, and a smaller context window will silently truncate it and break extraction. The model tested to work with both conversation and memory extraction is [this model](https://huggingface.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive/blob/main/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf)
+**1. Bring your own model.** The model files aren't in this repo (they're multi-gigabytes). Drop one in `models/`, then point `models/Modelfile`'s `FROM` line at its filename. It should be a Gemma-family model, and it needs `num_ctx` set to at least 16384 — the memory extraction prompt alone is around 8,000 tokens, and a smaller context window will silently truncate it and break extraction. The model tested to work with both conversation and memory extraction is [a quantized and abliterated Gemma 4 E4B model](https://huggingface.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive/blob/main/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf), which fits in the 6GB VRAM of a NVIDIA GTX 1660Ti card.
 
 **2. Set up SillyTavern's config.** Copy the template and fill in your own values:
 
@@ -68,7 +68,7 @@ cp sillytavern/config/config.yaml.example sillytavern/config/config.yaml
 
 Then edit that file and set a real `basicAuthUser.username`/`password`, and add the actual Tailscale IPs of whatever devices should be able to reach it to the `whitelist` array (`tailscale status` will show you those IPs).
 
-**3. Start Ollama and import your model.** This takes a few minutes for a multi-gigabyte file:
+**3. Start Ollama and import your model.** This takes a few minutes for a multi-gigabyte file. The last line pulls `nomic-embed-text`, the embedding model mem0 uses to turn memories into vectors for Qdrant — it comes straight from Ollama's library, no manual download needed:
 
 ```bash
 docker compose up -d ollama
@@ -88,7 +88,7 @@ docker compose up -d
 
 ### Where things are once it's running
 
-SillyTavern lives at `http://localhost:8000` on the local machine and can be accessed remotely at `http://<tailscale-ip-of-host>:8000` via a tailscale connection from whatever devices you whitelisted. The memory manager UI is local only at `http://localhost:8001/ui/`. 
+SillyTavern lives at `http://localhost:8000` on the local machine and can be accessed remotely at `http://<tailscale-ip-of-host>:8000` via a tailscale connection from whatever devices you whitelisted. The memory manager UI is local only at `http://localhost:8001/ui/`.
 
 The raw mem0 API docs are at `http://localhost:8001/docs`, and the Qdrant dashboard is at `http://localhost:6333/dashboard`. These two are for debugging only, you will unlikely need to access them.
 
