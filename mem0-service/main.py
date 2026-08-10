@@ -2,7 +2,9 @@ import json
 from typing import Optional
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from qdrant_client.models import FieldCondition, Filter, MatchValue
 from mem0 import Memory
 
 OLLAMA_BASE_URL = "http://ollama:11434"
@@ -46,6 +48,14 @@ class AddMemoryRequest(BaseModel):
 
 class UpdateMemoryRequest(BaseModel):
     text: str
+
+
+class BulkReplaceRequest(BaseModel):
+    user_id: str
+    agent_id: Optional[str] = None
+    all_agents: bool = False
+    find: str
+    replace: str
 
 
 SHARED_AGENT_ID = "shared"
@@ -117,14 +127,66 @@ def add_memory(req: AddMemoryRequest):
     return result
 
 
+def _distinct_field_values(field: str, filter_key: Optional[str] = None, filter_value: Optional[str] = None) -> list[str]:
+    # Scrolls the store collecting distinct values of `field`, optionally
+    # restricted to points where `filter_key` == `filter_value`. No Qdrant
+    # aggregation feature assumed -- plain scroll + collect, fine at this
+    # scale (a personal memory store, not a production-sized index).
+    client = memory.vector_store.client
+    collection = memory.collection_name
+
+    qdrant_filter = None
+    if filter_key and filter_value:
+        qdrant_filter = Filter(must=[FieldCondition(key=filter_key, match=MatchValue(value=filter_value))])
+
+    values: set[str] = set()
+    offset = None
+    while True:
+        points, offset = client.scroll(
+            collection_name=collection,
+            scroll_filter=qdrant_filter,
+            with_payload=[field],
+            with_vectors=False,
+            limit=200,
+            offset=offset,
+        )
+        for point in points:
+            value = (point.payload or {}).get(field)
+            if value:
+                values.add(value)
+        if offset is None:
+            break
+    return sorted(values)
+
+
+@app.get("/scopes")
+def get_scopes(user_id: Optional[str] = None, agent_id: Optional[str] = None):
+    # Cross-filtered: agent_ids returned only co-occur with the given
+    # user_id (if any), and vice versa -- so the two dropdowns in the admin
+    # UI only ever show combinations that actually exist together, rather
+    # than two independent global lists that could pair into an empty
+    # (but not obviously invalid-looking) combination.
+    return {
+        "user_ids": _distinct_field_values("user_id", "agent_id", agent_id),
+        "agent_ids": _distinct_field_values("agent_id", "user_id", user_id),
+    }
+
+
 @app.get("/memories")
-def list_memories(user_id: str, agent_id: Optional[str] = None):
-    return memory.get_all(filters=_scope(user_id, agent_id))
+def list_memories(user_id: str, agent_id: Optional[str] = None, all_agents: bool = False):
+    # all_agents=true skips resolving a single agent_id, matching every
+    # scope (shared and every character) for this user_id -- useful for an
+    # admin view that shows everything at once rather than one scope at a
+    # time. mem0's filter DSL matches any value for a field left out of the
+    # filter dict entirely, which is what makes this work.
+    filters = {"user_id": user_id} if all_agents else _scope(user_id, agent_id)
+    return memory.get_all(filters=filters)
 
 
 @app.get("/memories/search")
-def search_memories(query: str, user_id: str, agent_id: Optional[str] = None):
-    return memory.search(query, filters=_scope(user_id, agent_id))
+def search_memories(query: str, user_id: str, agent_id: Optional[str] = None, all_agents: bool = False):
+    filters = {"user_id": user_id} if all_agents else _scope(user_id, agent_id)
+    return memory.search(query, filters=filters)
 
 
 @app.get("/memories/context")
@@ -143,3 +205,31 @@ def update_memory(memory_id: str, req: UpdateMemoryRequest):
 def delete_memory(memory_id: str):
     memory.delete(memory_id)
     return {"status": "deleted"}
+
+
+@app.post("/memories/bulk-replace")
+def bulk_replace(req: BulkReplaceRequest):
+    # Plain case-sensitive literal substring replace -- predictable and
+    # auditable, not a regex/fuzzy match that could touch unintended text.
+    # Goes through the same memory.update() used by the single-memory PUT
+    # endpoint for each affected memory, so embeddings and entity_store links
+    # get refreshed correctly for every one of them -- this does not, and
+    # cannot, reconcile memories in other scopes or catch paraphrased
+    # mentions that don't literally contain `find`.
+    filters = {"user_id": req.user_id} if req.all_agents else _scope(req.user_id, req.agent_id)
+    all_memories = memory.get_all(filters=filters)["results"]
+
+    updated = []
+    for item in all_memories:
+        text = item.get("memory") or ""
+        if req.find in text:
+            new_text = text.replace(req.find, req.replace)
+            memory.update(item["id"], text=new_text)
+            updated.append({"id": item["id"], "before": text, "after": new_text})
+
+    return {"updated_count": len(updated), "updated": updated}
+
+
+# Mounted at /ui (not /) so it doesn't shadow the API routes above -- the
+# page's own JS calls those routes at the app's actual root.
+app.mount("/ui", StaticFiles(directory="static", html=True), name="ui")

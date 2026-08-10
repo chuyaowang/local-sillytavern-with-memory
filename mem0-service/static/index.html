@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Memory Manager</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+  h1 { font-size: 1.4rem; }
+  h2 { font-size: 1rem; margin-top: 2rem; }
+  .filters { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
+  .filters select, .filters input { padding: 0.4rem; border: 1px solid #ccc; border-radius: 4px; flex: 1; min-width: 140px; }
+  .filters button { padding: 0.4rem 0.9rem; border: none; border-radius: 4px; background: #2563eb; color: white; cursor: pointer; }
+  .filters button:hover { background: #1d4ed8; }
+  .bulk-replace { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; background: #fafafa; border: 1px solid #eee; border-radius: 6px; padding: 0.75rem; margin-bottom: 1.5rem; }
+  .bulk-replace input { padding: 0.4rem; border: 1px solid #ccc; border-radius: 4px; flex: 1; min-width: 140px; }
+  .bulk-replace button { padding: 0.4rem 0.9rem; border: 1px solid #b91c1c; border-radius: 4px; background: white; color: #b91c1c; cursor: pointer; }
+  .bulk-replace button:hover { background: #fef2f2; }
+  .bulk-replace .hint { flex-basis: 100%; font-size: 0.8rem; color: #888; }
+  .card { border: 1px solid #ddd; border-radius: 6px; padding: 0.75rem; margin-bottom: 0.75rem; }
+  .card .meta { font-size: 0.8rem; color: #666; margin-bottom: 0.4rem; }
+  .card .scope { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 3px; background: #e0e7ff; color: #3730a3; font-size: 0.75rem; margin-right: 0.5rem; }
+  .card textarea { width: 100%; box-sizing: border-box; min-height: 3rem; font-family: inherit; font-size: 0.95rem; padding: 0.4rem; border: 1px solid #ddd; border-radius: 4px; resize: vertical; }
+  .card textarea[readonly] { background: #fafafa; border-color: transparent; }
+  .card .actions { margin-top: 0.5rem; display: flex; gap: 0.5rem; }
+  .card .actions button { padding: 0.3rem 0.7rem; border: 1px solid #ccc; border-radius: 4px; background: white; cursor: pointer; font-size: 0.85rem; }
+  .card .actions button:hover { background: #f5f5f5; }
+  .card .actions button.danger { color: #b91c1c; border-color: #fca5a5; }
+  .card .actions button.save { background: #2563eb; color: white; border: none; display: none; }
+  .card .actions button.save:hover { background: #1d4ed8; }
+  #status { color: #666; font-size: 0.9rem; margin-bottom: 1rem; }
+</style>
+</head>
+<body>
+<h1>Memory Manager</h1>
+<div class="filters">
+  <select id="userId" onchange="onUserChanged()"><option value="">-- select user_id --</option></select>
+  <select id="agentId" onchange="onAgentChanged()"><option value="">All scopes</option></select>
+  <input id="query" placeholder="search text (optional)">
+  <button onclick="load()">Load</button>
+</div>
+<div id="status"></div>
+<div id="list"></div>
+
+<h2>Find and replace across the current scope</h2>
+<div class="bulk-replace">
+  <input id="findText" placeholder="Find (exact text)">
+  <input id="replaceText" placeholder="Replace with">
+  <button onclick="bulkReplace()">Replace All</button>
+  <div class="hint">Runs against whatever user_id/agent_id is selected above (all scopes if "All scopes"). Case-sensitive, literal text match. This only affects memories that literally contain the "Find" text -- it will not catch paraphrased mentions in other memories.</div>
+</div>
+
+<script>
+function fillOptions(select, placeholderText, ids) {
+  const previous = select.value;
+  select.innerHTML = '';
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = placeholderText;
+  select.appendChild(placeholder);
+  for (const id of ids) {
+    const opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = id;
+    select.appendChild(opt);
+  }
+  // Keep the previous selection only if it's still a valid option --
+  // otherwise reset to the placeholder rather than silently keeping an
+  // incompatible user_id/agent_id combination selected.
+  select.value = ids.includes(previous) ? previous : '';
+}
+
+// Initial load: no filters yet, both dropdowns get the full distinct list.
+async function loadScopes() {
+  try {
+    const res = await fetch('/scopes');
+    const data = await res.json();
+    fillOptions(document.getElementById('userId'), '-- select user_id --', data.user_ids || []);
+    fillOptions(document.getElementById('agentId'), 'All scopes', data.agent_ids || []);
+  } catch (err) {
+    document.getElementById('status').textContent = 'Failed to load user_id/agent_id lists: ' + err.message;
+  }
+}
+
+// user_id changed: narrow the agent_id options to only those that actually
+// co-occur with this user_id, resetting agent_id if it's no longer valid.
+async function onUserChanged() {
+  const userId = document.getElementById('userId').value;
+  const agentSelect = document.getElementById('agentId');
+  if (!userId) {
+    // Back to no user selected -- show every agent_id again.
+    const res = await fetch('/scopes');
+    const data = await res.json();
+    fillOptions(agentSelect, 'All scopes', data.agent_ids || []);
+    return;
+  }
+  const res = await fetch(`/scopes?${new URLSearchParams({ user_id: userId })}`);
+  const data = await res.json();
+  fillOptions(agentSelect, 'All scopes', data.agent_ids || []);
+}
+
+// agent_id changed: narrow the user_id options to only those that actually
+// co-occur with this agent_id, resetting user_id if it's no longer valid.
+async function onAgentChanged() {
+  const agentId = document.getElementById('agentId').value;
+  const userSelect = document.getElementById('userId');
+  if (!agentId) {
+    const res = await fetch('/scopes');
+    const data = await res.json();
+    fillOptions(userSelect, '-- select user_id --', data.user_ids || []);
+    return;
+  }
+  const res = await fetch(`/scopes?${new URLSearchParams({ agent_id: agentId })}`);
+  const data = await res.json();
+  fillOptions(userSelect, '-- select user_id --', data.user_ids || []);
+}
+
+function currentScope() {
+  return {
+    userId: document.getElementById('userId').value,
+    agentId: document.getElementById('agentId').value,
+  };
+}
+
+async function load() {
+  const { userId, agentId } = currentScope();
+  const query = document.getElementById('query').value.trim();
+  const status = document.getElementById('status');
+  const list = document.getElementById('list');
+  list.innerHTML = '';
+
+  if (!userId) {
+    status.textContent = 'Select a user_id first.';
+    return;
+  }
+
+  status.textContent = 'Loading...';
+  try {
+    const params = new URLSearchParams({ user_id: userId });
+    if (agentId) {
+      params.set('agent_id', agentId);
+    } else {
+      params.set('all_agents', 'true');
+    }
+
+    let url;
+    if (query) {
+      params.set('query', query);
+      url = `/memories/search?${params}`;
+    } else {
+      url = `/memories?${params}`;
+    }
+
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    const data = await res.json();
+    const results = data.results || [];
+
+    status.textContent = `${results.length} ${results.length === 1 ? 'memory' : 'memories'}`;
+    for (const item of results) {
+      list.appendChild(renderCard(item));
+    }
+  } catch (err) {
+    status.textContent = 'Error: ' + err.message;
+  }
+}
+
+async function bulkReplace() {
+  const { userId, agentId } = currentScope();
+  const find = document.getElementById('findText').value;
+  const replace = document.getElementById('replaceText').value;
+  const status = document.getElementById('status');
+
+  if (!userId) {
+    status.textContent = 'Select a user_id first.';
+    return;
+  }
+  if (!find) {
+    status.textContent = 'Enter text to find.';
+    return;
+  }
+  const scopeLabel = agentId || 'all scopes';
+  if (!confirm(`Replace every "${find}" with "${replace}" in ${userId} / ${scopeLabel}? This edits memories directly.`)) {
+    return;
+  }
+
+  status.textContent = 'Replacing...';
+  try {
+    const res = await fetch('/memories/bulk-replace', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_id: userId,
+        agent_id: agentId || null,
+        all_agents: !agentId,
+        find,
+        replace,
+      }),
+    });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    const data = await res.json();
+    status.textContent = `Updated ${data.updated_count} ${data.updated_count === 1 ? 'memory' : 'memories'}.`;
+    load();
+  } catch (err) {
+    status.textContent = 'Replace failed: ' + err.message;
+  }
+}
+
+function renderCard(item) {
+  const div = document.createElement('div');
+  div.className = 'card';
+
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  const scopeLabel = item.agent_id === 'shared' ? 'shared' : (item.agent_id || 'unscoped');
+  const when = item.created_at ? new Date(item.created_at).toLocaleString() : '';
+  meta.innerHTML = `<span class="scope">${escapeHtml(scopeLabel)}</span>${escapeHtml(when)}`;
+  div.appendChild(meta);
+
+  const textarea = document.createElement('textarea');
+  textarea.value = item.memory ?? item.data ?? '';
+  textarea.readOnly = true;
+  div.appendChild(textarea);
+
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+
+  const editBtn = document.createElement('button');
+  editBtn.textContent = 'Edit';
+  const saveBtn = document.createElement('button');
+  saveBtn.textContent = 'Save';
+  saveBtn.className = 'save';
+  const deleteBtn = document.createElement('button');
+  deleteBtn.textContent = 'Delete';
+  deleteBtn.className = 'danger';
+
+  editBtn.onclick = () => {
+    textarea.readOnly = false;
+    textarea.focus();
+    saveBtn.style.display = 'inline-block';
+    editBtn.style.display = 'none';
+  };
+
+  saveBtn.onclick = async () => {
+    saveBtn.disabled = true;
+    try {
+      const res = await fetch(`/memories/${item.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: textarea.value }),
+      });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      textarea.readOnly = true;
+      saveBtn.style.display = 'none';
+      editBtn.style.display = 'inline-block';
+    } catch (err) {
+      alert('Save failed: ' + err.message);
+    } finally {
+      saveBtn.disabled = false;
+    }
+  };
+
+  deleteBtn.onclick = async () => {
+    if (!confirm('Delete this memory permanently?')) return;
+    try {
+      const res = await fetch(`/memories/${item.id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      div.remove();
+    } catch (err) {
+      alert('Delete failed: ' + err.message);
+    }
+  };
+
+  actions.appendChild(editBtn);
+  actions.appendChild(saveBtn);
+  actions.appendChild(deleteBtn);
+  div.appendChild(actions);
+
+  return div;
+}
+
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+loadScopes();
+</script>
+</body>
+</html>
