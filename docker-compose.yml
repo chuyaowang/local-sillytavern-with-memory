@@ -1,0 +1,88 @@
+networks:
+  roleplay-net:
+
+volumes:
+  ollama_models:
+  qdrant_storage:
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    environment:
+      # Allow the roleplay model, embedder, and extraction model to stay
+      # resident simultaneously instead of evicting each other.
+      OLLAMA_MAX_LOADED_MODELS: "4"
+      OLLAMA_KV_CACHE_TYPE: "q8_0"
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+      # Read-only access to the GGUF + Modelfile so the model can be
+      # (re-)imported from inside the container without touching the
+      # native filesystem.
+      - ./models:/import:ro
+    networks:
+      - roleplay-net
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6333:6333" # REST
+      - "127.0.0.1:6334:6334" # gRPC
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    networks:
+      - roleplay-net
+
+  mem0:
+    build: ./mem0-service
+    container_name: mem0
+    restart: unless-stopped
+    environment:
+      MEM0_TELEMETRY: "False"
+    ports:
+      - "127.0.0.1:8001:8001"
+    depends_on:
+      - ollama
+      - qdrant
+    networks:
+      - roleplay-net
+
+  sillytavern:
+    image: ghcr.io/sillytavern/sillytavern:latest
+    container_name: sillytavern
+    hostname: sillytavern
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - FORCE_COLOR=1
+      - SILLYTAVERN_HEARTBEATINTERVAL=30
+    ports:
+      # Bound to all interfaces (not 127.0.0.1 like the other services) --
+      # this is the one component meant to be reachable from the Tailscale
+      # network, not just localhost.
+      - "8000:8000"
+    volumes:
+      - "./sillytavern/config:/home/node/app/config"
+      - "./sillytavern/data:/home/node/app/data"
+      - "./sillytavern/plugins:/home/node/app/plugins"
+      - "./sillytavern/extensions:/home/node/app/public/scripts/extensions/third-party"
+    healthcheck:
+      test: ["CMD", "node", "src/healthcheck.js"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
+    networks:
+      - roleplay-net

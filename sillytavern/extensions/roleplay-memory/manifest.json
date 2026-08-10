@@ -1,0 +1,13 @@
+{
+    "display_name": "Roleplay Memory",
+    "loading_order": 10,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "",
+    "author": "local-roleplay-agent",
+    "version": "1.0.0",
+    "homePage": "",
+    "auto_update": false,
+    "generate_interceptor": "roleplayMemoryInterceptor"
+}

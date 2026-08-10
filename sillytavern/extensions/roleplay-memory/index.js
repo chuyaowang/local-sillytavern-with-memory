@@ -1,0 +1,175 @@
+function slugify(value) {
+    if (!value) return null;
+    return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || null;
+}
+
+function getIds() {
+    const context = SillyTavern.getContext();
+    const character = context.characters?.[context.characterId];
+    return {
+        userId: slugify(context.name1) || 'default-user',
+        agentId: slugify(character?.name),
+    };
+}
+
+function getLastUserMessage(chat) {
+    for (let i = chat.length - 1; i >= 0; i--) {
+        if (chat[i].is_user) return chat[i].mes;
+    }
+    return '';
+}
+
+// Hardcoded because these enums are NOT exposed via SillyTavern.getContext()
+// (verified against public/script.js). If ST ever changes these values this
+// will need updating.
+// IN_CHAT (1) does NOT merge into a flat Text Completion prompt string --
+// confirmed by inspecting the actual outgoing prompt, it merges into a
+// structured Chat Completion messages array instead. IN_PROMPT (0) is the
+// one that actually shows up in the Text Completion prompt we build here;
+// verified directly in SillyTavern's logs.
+const EXTENSION_PROMPT_TYPE_IN_PROMPT = 0; // extension_prompt_types.IN_PROMPT
+const EXTENSION_PROMPT_ROLE_SYSTEM = 0; // extension_prompt_roles.SYSTEM
+const EXTENSION_PROMPT_KEY = 'roleplay-memory';
+const EXTENSION_PROMPT_DEPTH = 0;
+
+// Referenced by manifest.json's "generate_interceptor" field. Runs before
+// every non-quiet generation. Uses SillyTavern's own setExtensionPrompt API
+// (the same mechanism its built-in summarize/memory extension uses) to
+// inject relevant memories at a shallow depth in the prompt -- NOT by
+// mutating the `chat` array directly. That earlier approach was a bug: a
+// hand-rolled message object isn't excluded from the model's own turn the
+// way a real extension prompt slot is, which caused the model to treat the
+// injected note as the start of its own reply and echo it back verbatim.
+// Calling setExtensionPrompt again with the same key also replaces the
+// previous value instead of accumulating a new note every turn.
+globalThis.roleplayMemoryInterceptor = async function (chat, contextSize, abort, type) {
+    if (type === 'quiet') return;
+
+    const query = getLastUserMessage(chat);
+    if (!query) return;
+
+    const { userId, agentId } = getIds();
+    const context = SillyTavern.getContext();
+
+    try {
+        const params = new URLSearchParams({ user_id: userId, query });
+        if (agentId) params.set('agent_id', agentId);
+        const response = await fetch(`/api/plugins/roleplay-memory/context?${params}`);
+        if (!response.ok) return;
+        const data = await response.json();
+
+        const facts = [
+            ...(data.shared?.results || []),
+            ...(data.character?.results || []),
+        ].map((r) => r.memory);
+
+        const value = facts.length > 0 ? `Relevant memories: ${facts.join(' | ')}` : '';
+
+        // Always call this, even with an empty value -- otherwise a turn
+        // with no relevant facts would leave the *previous* turn's note
+        // still injected, since this slot only updates on an explicit call.
+        if (typeof context.setExtensionPrompt !== 'function') {
+            console.error('[roleplay-memory] setExtensionPrompt is not available on context:', context);
+            return;
+        }
+        context.setExtensionPrompt(
+            EXTENSION_PROMPT_KEY,
+            value,
+            EXTENSION_PROMPT_TYPE_IN_PROMPT,
+            EXTENSION_PROMPT_DEPTH,
+            false,
+            EXTENSION_PROMPT_ROLE_SYSTEM,
+        );
+        console.log('[roleplay-memory] setExtensionPrompt called:', { value, depth: EXTENSION_PROMPT_DEPTH });
+    } catch (err) {
+        console.error('[roleplay-memory] context injection failed:', err);
+    }
+};
+
+// --- Push direction: batched extraction ---
+//
+// Rather than sending every single exchange to mem0 immediately, exchanges
+// accumulate in `buffer` and get flushed (sent as one batch) when any of:
+//   - the buffer's estimated size crosses TOKEN_THRESHOLD
+//   - the user explicitly asks to remember something (TRIGGER_PHRASES)
+//   - the conversation goes idle for IDLE_MS with nothing flushed yet
+//   - the chat/character changes (flush immediately so buffered messages
+//     don't get misattributed to whatever character comes next)
+
+const TOKEN_THRESHOLD = 800; // approximate (chars / 4) -- not exact tokenization, just a batching heuristic
+const IDLE_MS = 2 * 60 * 1000; // flush after 2 minutes of no new exchanges
+const TRIGGER_PHRASES = ['remember this', 'remember that', 'memorize this', 'memorize that'];
+
+let buffer = [];
+let bufferCharCount = 0;
+let idleTimer = null;
+
+function estimateTokens(charCount) {
+    return Math.ceil(charCount / 4);
+}
+
+function containsTriggerPhrase(text) {
+    const lower = text.toLowerCase();
+    return TRIGGER_PHRASES.some((phrase) => lower.includes(phrase));
+}
+
+async function flushBuffer() {
+    if (idleTimer) {
+        clearTimeout(idleTimer);
+        idleTimer = null;
+    }
+    if (buffer.length === 0) return;
+
+    const messages = buffer;
+    buffer = [];
+    bufferCharCount = 0;
+
+    const { userId, agentId } = getIds();
+
+    try {
+        // POST requests need an X-CSRF-Token header or ST's CSRF middleware
+        // rejects them with 403, even with a valid session/basic-auth.
+        const { token } = await (await fetch('/csrf-token')).json();
+        await fetch('/api/plugins/roleplay-memory/add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token },
+            body: JSON.stringify({ messages, user_id: userId, agent_id: agentId || undefined }),
+        });
+    } catch (err) {
+        console.error('[roleplay-memory] flush failed:', err);
+    }
+}
+
+function scheduleIdleFlush() {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(flushBuffer, IDLE_MS);
+}
+
+async function onMessageReceived() {
+    const context = SillyTavern.getContext();
+    const chat = context.chat;
+    if (!chat || chat.length < 2) return;
+
+    const lastAssistant = chat[chat.length - 1];
+    if (!lastAssistant || lastAssistant.is_user) return;
+
+    const lastUser = [...chat].reverse().find((m) => m.is_user);
+    if (!lastUser) return;
+
+    buffer.push({ role: 'user', content: lastUser.mes });
+    buffer.push({ role: 'assistant', content: lastAssistant.mes });
+    bufferCharCount += lastUser.mes.length + lastAssistant.mes.length;
+
+    const explicitTrigger = containsTriggerPhrase(lastUser.mes);
+    if (explicitTrigger || estimateTokens(bufferCharCount) >= TOKEN_THRESHOLD) {
+        await flushBuffer();
+    } else {
+        scheduleIdleFlush();
+    }
+}
+
+jQuery(async () => {
+    const { eventSource, event_types } = SillyTavern.getContext();
+    eventSource.on(event_types.MESSAGE_RECEIVED, onMessageReceived);
+    eventSource.on(event_types.CHAT_CHANGED, flushBuffer);
+});
