@@ -92,4 +92,17 @@ SillyTavern lives at `http://localhost:8000` on the local machine and can be acc
 
 The raw mem0 API docs are at `http://localhost:8001/docs`, and the Qdrant dashboard is at `http://localhost:6333/dashboard`. These two are for debugging only, you will unlikely need to access them.
 
-For everything else — why things are built the way they are, decisions that got reversed along the way, and a running list of things that failed silently and cost time to track down — see [CLAUDE.md](CLAUDE.md).
+## Third-party components
+
+This repo's own code is Apache-2.0 (see [LICENSE](LICENSE)), but it wires together several separately-licensed pieces you should know about if you're redistributing or building on this:
+
+| Component | License |
+| --- | --- |
+| [SillyTavern](https://github.com/SillyTavern/SillyTavern) | AGPL-3.0 |
+| [Ollama](https://github.com/ollama/ollama) | MIT |
+| [Qdrant](https://github.com/qdrant/qdrant) | Apache-2.0 |
+| [mem0](https://github.com/mem0ai/mem0) | Apache-2.0 |
+| [nomic-embed-text](https://huggingface.co/nomic-ai/nomic-embed-text-v1.5) | Apache-2.0 |
+| Gemma models (base and fine-tunes) | [Gemma Terms of Use](https://ai.google.dev/gemma/terms) — a custom license with a prohibited-use policy, not a standard OSI license |
+
+None of these are vendored into this repo — SillyTavern, Ollama, and Qdrant run as their own upstream Docker images, and the model GGUF is something you bring yourself (see step 1 above). SillyTavern's AGPL-3.0 doesn't extend to the server plugin or client extension in this repo, since they're separate code loaded through SillyTavern's public plugin/extension API, not a modified copy of SillyTavern itself.
