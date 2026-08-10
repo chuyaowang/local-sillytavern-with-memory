@@ -42,6 +42,44 @@ fi
 
 echo "=== Testing model: ${MODEL} ==="
 
+gpu_mem_used() {
+  nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | head -n1
+}
+
+unload_all_models() {
+  local loaded
+  loaded=$(curl -sf "${OLLAMA_URL}/api/ps" | jq -r '.models[]?.model')
+  while IFS= read -r m; do
+    [[ -z "$m" ]] && continue
+    curl -sf "${OLLAMA_URL}/api/generate" -d "$(jq -n --arg model "$m" '{model: $model, keep_alive: 0}')" >/dev/null || true
+  done <<< "$loaded"
+  sleep 2
+}
+
+check_vram_footprint() {
+  echo ""
+  echo "--- Check 2: VRAM footprint ---"
+  info "Unloading all currently loaded models for a clean measurement (they'll reload on next use)..."
+  unload_all_models
+
+  local baseline
+  baseline=$(gpu_mem_used)
+
+  curl -sf -m 120 "${OLLAMA_URL}/api/generate" -d "$(jq -n --arg model "$MODEL" '{model: $model, prompt: "hi", stream: false}')" >/dev/null
+
+  local after actual_delta
+  after=$(gpu_mem_used)
+  actual_delta=$(( after - baseline ))
+
+  local estimate_bytes estimate_mib
+  estimate_bytes=$(curl -sf "${OLLAMA_URL}/api/ps" | jq -r --arg model "$MODEL" \
+    '.models[] | select(.model == $model or .model == ($model + ":latest")) | .size_vram // 0')
+  estimate_mib=$(( ${estimate_bytes:-0} / 1024 / 1024 ))
+
+  echo "Actual GPU memory delta:     ${actual_delta} MiB"
+  echo "Ollama's reported size_vram: ${estimate_mib} MiB"
+}
+
 check_text_generation() {
   echo ""
   echo "--- Check 1: text generation ---"
@@ -70,3 +108,4 @@ check_text_generation() {
 }
 
 check_text_generation
+check_vram_footprint
