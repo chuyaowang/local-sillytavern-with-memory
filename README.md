@@ -88,6 +88,8 @@ docker compose up -d
 
 ### Where things are once it's running
 
-SillyTavern lives at `http://<tailscale-ip-of-host>:8000`, reachable from whatever devices you whitelisted. Everything else stays local to the host: the memory manager UI is at `http://localhost:8001/ui/`, the raw mem0 API docs at `http://localhost:8001/docs`, and the Qdrant dashboard at `http://localhost:6333/dashboard`.
+SillyTavern lives at `http://localhost:8000` on the local machine and can be accessed remotely at `http://<tailscale-ip-of-host>:8000` via a tailscale connection from whatever devices you whitelisted. The memory manager UI is local only at `http://localhost:8001/ui/`. 
+
+The raw mem0 API docs are at `http://localhost:8001/docs`, and the Qdrant dashboard is at `http://localhost:6333/dashboard`. These two are for debugging only, you will unlikely need to access them.
 
 For everything else — why things are built the way they are, decisions that got reversed along the way, and a running list of things that failed silently and cost time to track down — see [CLAUDE.md](CLAUDE.md).

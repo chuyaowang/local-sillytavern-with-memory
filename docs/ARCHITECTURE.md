@@ -10,6 +10,7 @@ graph TD
     subgraph local_machine["<b>Local machine</b>"]
         direction LR
         host["<b>Admin Page</b>"]
+        local["<b>Browser"]
         
         subgraph docker["<b>Docker network</b>"]
             direction LR
@@ -26,7 +27,8 @@ graph TD
     end
 
     remote -- Remote Access --> st
-    host -- Local Access --> editor
+    host -- User Interface --> editor
+    local -- Local Access --> st
     editor -- Management --> memory
 
     ollama -- Text Generation --> st
