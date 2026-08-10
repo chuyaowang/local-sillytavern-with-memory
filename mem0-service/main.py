@@ -16,11 +16,20 @@ OLLAMA_BASE_URL = "http://ollama:11434"
 # serve either one depending on which compose service sets it.
 QDRANT_HOST = os.environ.get("QDRANT_HOST", "qdrant")
 
+# Model is swappable per-container the same way -- lets a throwaway
+# container (e.g. scripts/test-model.sh) evaluate a candidate model without
+# touching the real dev/prod mem0 containers or their config.
+MEM0_LLM_MODEL = os.environ.get("MEM0_LLM_MODEL", "gemma4-e4b-hauhaucs")
+
+# Same idea for the collection name -- a throwaway container can write to a
+# scratch collection instead of the real "roleplay_memories" store.
+QDRANT_COLLECTION = os.environ.get("QDRANT_COLLECTION", "roleplay_memories")
+
 config = {
     "llm": {
         "provider": "ollama",
         "config": {
-            "model": "gemma4-e4b-hauhaucs",
+            "model": MEM0_LLM_MODEL,
             "ollama_base_url": OLLAMA_BASE_URL,
         },
     },
@@ -34,7 +43,7 @@ config = {
     "vector_store": {
         "provider": "qdrant",
         "config": {
-            "collection_name": "roleplay_memories",
+            "collection_name": QDRANT_COLLECTION,
             "host": QDRANT_HOST,
             "port": 6333,
             "embedding_model_dims": 768,  # nomic-embed-text output size

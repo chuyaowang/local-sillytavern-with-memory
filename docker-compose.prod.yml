@@ -33,6 +33,7 @@ services:
     environment:
       MEM0_TELEMETRY: "False"
       QDRANT_HOST: qdrant-prod
+      MEM0_LLM_MODEL: gemma4-e4b-hauhaucs
     ports:
       - "127.0.0.1:8011:8001"
     depends_on:
