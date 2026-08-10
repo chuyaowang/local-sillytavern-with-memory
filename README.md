@@ -9,26 +9,29 @@ This is a self-hosted roleplay/chat setup that runs entirely on your own hardwar
 - **mem0** is the memory engine sitting on top of Qdrant — it decides what's worth remembering from a conversation, stores it, and pulls relevant memories back out when they're needed.
 - **SillyTavern** is the chat frontend you actually talk to. It's wired up to Ollama for generation and to mem0 through a custom plugin + extension pair that injects relevant memories into the prompt and sends new facts back after each exchange.
 
-Everything runs in Docker on one machine. Only SillyTavern is exposed beyond localhost, and only over Tailscale, with basic auth and an IP whitelist on top for access control.
+Everything runs in Docker on one machine. Only SillyTavern is exposed beyond localhost — reachable locally, or from another device over Tailscale — with basic auth and an IP whitelist on top for access control.
 
-![Architecture diagram](docs/architecture.svg)
+<img src="docs/architecture.svg" alt="Architecture diagram" width="420">
 
 ## What it can actually do right now
 
-- Chat with a local (and uncensored) model, GPU-accelerated, no internet required
-- Remember things about you that carry across every character you talk to (favorite foods, your job, whatever comes up) — a shared memory layer
-- Also remember things specific to one character's relationship/history with you, kept separate from that shared layer
-- Automatically sort which is which — a small classification pass decides if a new fact is general-purpose or specific to the character you were talking to
+- Chat with a local (and uncensored) model in SillyTavern, letting it role-play as different characters.
+- Store memories about you locally:
+  - Shared memory layer: facts about you (favorite foods, your job, whatever comes up)
+  - Character-specific memory layer: things specific to one character's relationship/history with you
+  - Automatically sort which is which and separately store the two layers
+  - Browse, hand-edit, delete, or bulk find-and-replace memories through a small web UI, without touching the database directly
 - Reach the whole thing from another device (phone, laptop) over Tailscale without exposing anything to the open internet
-- Browse, hand-edit, delete, or bulk find-and-replace memories through a small web UI, without touching the database directly
 
 ## Setting it up
 
 ### Before you start
 
-You'll need a Linux box with an NVIDIA GPU, [Tailscale](https://tailscale.com) set up on it (and on whatever device you want to reach it from), and native Docker Engine — not Docker Desktop. Docker Desktop on Linux runs everything inside its own VM, which just gets in the way of GPU passthrough for no benefit here.
+You'll need a Linux box with an NVIDIA GPU, [Tailscale](https://tailscale.com) set up on it (and on whatever device you want to reach it from), and native Docker Engine — not Docker Desktop. The following commands walk through the set-up on a Ubuntu 22.04 computer. Ask a LLM to adjust them for your own hardware.
 
-If you don't have native Docker Engine yet:
+---
+
+If you don't have native Docker Engine yet,
 
 ```bash
 sudo apt-get update
@@ -58,7 +61,7 @@ Quick sanity check that GPU passthrough actually works: `docker run --rm --gpus 
 
 ### Getting the app running
 
-**1. Bring your own model.** The model files aren't in this repo (they're multi-gigabytes). Drop one in `models/`, then point `models/Modelfile`'s `FROM` line at its filename. It should be a Gemma-family model, and it needs `num_ctx` set to at least 16384 — the memory extraction prompt alone is around 8,000 tokens, and a smaller context window will silently truncate it and break extraction. The model tested to work with both conversation and memory extraction is [a quantized and abliterated Gemma 4 E4B model](https://huggingface.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive/blob/main/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf), which fits in the 6GB VRAM of a NVIDIA GTX 1660Ti card.
+**1. Bring your own model.** The model files aren't in this repo (they're multi-gigabytes). Drop one in `models/`, then point `models/Modelfile`'s `FROM` line at its filename. The model tested to work was [a quantized and abliterated Gemma 4 E4B model](https://huggingface.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive/blob/main/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf), which fits in the 6GB VRAM of a NVIDIA GTX 1660Ti card. The `num_ctx` in `Modelfile` needs to be at least 16384 — the memory extraction prompt alone is around 8,000 tokens, and a smaller context window will silently truncate it and break extraction.
 
 **2. Set up SillyTavern's config.** Copy the template and fill in your own values:
 
