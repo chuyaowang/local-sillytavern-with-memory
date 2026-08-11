@@ -65,6 +65,12 @@ fi
 
 echo "=== Testing model: ${MODEL} ==="
 
+info "Warming up ${MODEL} (first load of a large/uncached model can take a while)..."
+if ! curl -sf -m 300 "${OLLAMA_URL}/api/generate" -d "$(jq -n --arg model "$MODEL" '{model: $model, prompt: "hi", stream: false}')" >/dev/null; then
+  echo "Couldn't load '${MODEL}' into Ollama even with a 5-minute warm-up window. Check 'docker logs ollama' for details." >&2
+  exit 1
+fi
+
 gpu_mem_used() {
   nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | head -n1
 }
