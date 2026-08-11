@@ -112,7 +112,7 @@ start_test_containers() {
 
   docker run -d --name "$QDRANT_TEST_CONTAINER" --network "$NETWORK" qdrant/qdrant:latest >/dev/null
 
-  docker build -t "$MEM0_TEST_IMAGE" ./mem0-service >/dev/null
+  docker build -t "$MEM0_TEST_IMAGE" ./mem0-service >/dev/null 2>&1
 
   docker run -d --name "$MEM0_TEST_CONTAINER" --network "$NETWORK" \
     -e "MEM0_LLM_MODEL=${MODEL}" \
@@ -163,6 +163,8 @@ check_extraction_json_syntax() {
   else
     pass "extraction JSON syntax (${memory_count} facts, no fallback needed)"
   fi
+  echo "Extraction JSON:"
+  echo "$response" | jq '.cleaned_response | fromjson'
 }
 
 check_extraction_pipeline() {
