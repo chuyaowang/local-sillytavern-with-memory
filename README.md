@@ -63,6 +63,8 @@ Quick sanity check that GPU passthrough actually works: `docker run --rm --gpus 
 
 **1. Bring your own model.** The model files aren't in this repo (they're multi-gigabytes). Drop one in `models/`, then point `models/Modelfile`'s `FROM` line at its filename. The model tested to work was [a quantized and abliterated Gemma 4 E4B model](https://huggingface.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive/blob/main/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf), which fits in the 6GB VRAM of a NVIDIA GTX 1660Ti card. The `num_ctx` in `Modelfile` needs to be at least 16384 — the memory extraction prompt alone is around 8,000 tokens, and a smaller context window will silently truncate it and break extraction.
 
+If you ever want to switch to a different model, run `./scripts/test-model.sh <model-name>` first — it checks text generation, VRAM footprint vs. Ollama's own estimate, and whether the model breaks mem0's memory extraction before you commit to it.
+
 **2. Set up SillyTavern's config.** Copy the template and fill in your own values:
 
 ```bash
