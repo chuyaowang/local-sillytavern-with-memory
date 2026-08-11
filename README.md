@@ -63,7 +63,7 @@ Quick sanity check that GPU passthrough actually works: `docker run --rm --gpus 
 
 **1. Bring your own model.** The model files aren't in this repo (they're multi-gigabytes). Drop one in `models/`, then point `models/Modelfile`'s `FROM` line at its filename. The model tested to work was [a quantized and abliterated Gemma 4 E4B model](https://huggingface.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive/blob/main/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf), which fits in the 6GB VRAM of a NVIDIA GTX 1660Ti card. The `num_ctx` in `Modelfile` needs to be at least 16384 — the memory extraction prompt alone is around 8,000 tokens, and a smaller context window will silently truncate it and break extraction.
 
-If you ever want to switch to a different model, run `./scripts/test-model.sh <model-name>` first — it checks text generation, VRAM footprint vs. Ollama's own estimate, and whether the model breaks mem0's memory extraction before you commit to it.
+See [Changing the model](#changing-the-model) below if you want to switch to a different one later.
 
 **2. Set up SillyTavern's config.** Copy the template and fill in your own values:
 
@@ -98,6 +98,26 @@ SillyTavern lives at `http://localhost:8000` on the local machine and can be acc
 The raw mem0 API docs are at `http://localhost:8001/docs`, and the Qdrant dashboard is at `http://localhost:6333/dashboard`. These two are for debugging only, you will unlikely need to access them.
 
 There's also an optional `docker-compose.prod.yml` overlay for running a second, fully isolated instance to separate development and actual use data — see [CLAUDE.md](CLAUDE.md) if you want to set one up. Once it exists, `make dev-up`/`make prod-up` (and `-down`) start and stop each stack without needing to remember the underlying `docker compose` commands — run bare `make` to see all of them.
+
+## Changing the model
+
+1. **Download a GGUF.** Any Ollama-compatible GGUF works — grab one from Hugging Face or wherever you like. Place it in `models/`.
+2. **Point `models/Modelfile` at it.** Edit the `FROM ./<filename>.gguf` line to match, and make sure `num_ctx` stays at 16384 or higher — mem0's extraction prompt alone is around 8,000 tokens, and a smaller context window silently truncates it and breaks extraction.
+3. **Import it into Ollama under a new tag**, so your current model stays available until you're sure the new one works:
+   ```bash
+   docker exec -w /import ollama ollama create <new-model-tag> -f Modelfile
+   ```
+4. **Test it before committing to it:**
+   ```bash
+   ./scripts/test-model.sh <new-model-tag>
+   ```
+   This checks text generation, VRAM footprint vs. Ollama's own estimate, and whether the model breaks mem0's memory extraction (including a JSON-syntax check mem0 itself doesn't surface on its own). Pick a different model if anything fails.
+5. **Switch mem0 over to it.** Update `MEM0_LLM_MODEL:` in `docker-compose.yml` (and `docker-compose.prod.yml`, if you run the prod stack too) to `<new-model-tag>`, then rebuild and restart:
+   ```bash
+   docker compose build mem0
+   docker compose up -d mem0
+   ```
+6. **Point SillyTavern at it.** In the SillyTavern UI, API Connections, re-pick the new model from the dropdown (same place as setup step 5 above).
 
 ## Third-party components
 
