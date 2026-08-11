@@ -230,3 +230,13 @@ trap cleanup_test_containers EXIT
 check_text_generation
 check_vram_footprint
 check_memory_extraction
+
+echo ""
+echo "=== Summary ==="
+if [[ "$FAILED" -eq 0 ]]; then
+  echo "${GREEN}All checks passed.${NC}"
+else
+  echo "${RED}One or more checks failed.${NC}"
+fi
+
+exit "$FAILED"
