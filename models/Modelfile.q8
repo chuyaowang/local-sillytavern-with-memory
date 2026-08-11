@@ -1,0 +1,8 @@
+FROM ./Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q8_K_P.gguf
+
+PARAMETER temperature 1.0
+PARAMETER top_p 0.95
+PARAMETER top_k 64
+PARAMETER num_ctx 16384
+
+SYSTEM """You are an AI language model. Respond to the user's input."""
