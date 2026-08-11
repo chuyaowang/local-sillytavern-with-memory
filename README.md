@@ -112,7 +112,7 @@ There's also an optional `docker-compose.prod.yml` overlay for running a second,
 
 ## Changing the model
 
-1. **Download a GGUF.** Any Ollama-compatible GGUF works — grab one from Hugging Face or wherever you like. Place it in `models/`.
+1. **Download a GGUF.** Any Ollama-compatible GGUF works — grab one from Hugging Face or wherever you like. Place it in `models/`. Note that the actual VRAM used is **less than** the size of the GGUF file. For example, the Gemma 4 E4B Q4 model tested uses ~2.9 GB VRAM while the GGUF file size is ~5.4 GB, because not everything in the model needs to be loaded to the GPU.
 2. **Point `models/Modelfile` at it.** Edit the `FROM ./<filename>.gguf` line to match, and make sure `num_ctx` stays at 16384 or higher — mem0's extraction prompt alone is around 8,000 tokens, and a smaller context window silently truncates it and breaks extraction.
 3. **Import it into Ollama under a new tag**, so your current model stays available until you're sure the new one works:
 
@@ -180,8 +180,6 @@ The Makefile wraps the underlying `docker compose -f docker-compose.yml -f docke
 | `make status` | Show what's currently running |
 
 `make dev-up` and `make prod-up` each print that stack's SillyTavern and memory-manager URLs once it's up — dev on `:8000`/`:8001`, prod on `:8010`/`:8011`. Run bare `make` to see this list at any time.
-
-See [CLAUDE.md](CLAUDE.md) for the full reasoning behind what's shared vs. duplicated between the two stacks.
 
 ## Third-party components
 
