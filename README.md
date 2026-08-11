@@ -136,6 +136,15 @@ There's also an optional `docker-compose.prod.yml` overlay for running a second,
 
 6. **Point SillyTavern at it.** In the SillyTavern UI, API Connections, re-pick the new model from the dropdown (same place as setup step 6 above).
 
+### Models checked so far
+
+Results from running `scripts/test-model.sh` against each model, for reference:
+
+| Model | Text generation | VRAM footprint (actual / Ollama's estimate) | Extraction JSON syntax | Extraction pipeline |
+| --- | --- | --- | --- | --- |
+| [Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q4_K_P](https://huggingface.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive/blob/main/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf) | Pass | ~2.9 GB / ~3.0 GB | Pass | Pass |
+| [Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q8_K_P](https://huggingface.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive/blob/main/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q8_K_P.gguf) | Pass | ~4.7 GB / ~4.4 GB | Pass | Pass |
+
 ## Setting up a dev vs. prod environment
 
 By default you have one stack — `qdrant`, `mem0`, `sillytavern` — which is fine if you're not planning to test changes against the memories and chats you actually use day to day. `docker-compose.prod.yml` adds a second, fully isolated stack (`qdrant-prod`, `mem0-prod`, `sillytavern-prod`) so you can develop or try things out without touching your real data. The two stacks share only Ollama (GPU/VRAM is the scarce resource, no reason to load the model twice) and the SillyTavern plugin/extension source code; everything else — config, memory data, chat history — is completely separate.
