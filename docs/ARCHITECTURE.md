@@ -1,8 +1,17 @@
 # Architecture
 
 ```mermaid
+---
+config:
+  look: handDrawn
+  theme: neutral
+  themeVariables:
+    fontFamily: 'Caveat, "Comic Neue", cursive, sans-serif'
+  layout: elk
+  elk:
+    nodePlacementStrategy: BRANDES_KOEPF
+---
 graph TD
-    %%{init: {"flowchart": {"defaultRenderer": "elk"}} }%%
     subgraph remote_machine["<b>Remote machine</b>"]
         remote["<b>Browser</b>"]
     end
