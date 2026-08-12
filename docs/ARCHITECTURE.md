@@ -6,7 +6,7 @@ config:
   look: handDrawn
   theme: neutral
   themeVariables:
-    fontFamily: ComicNeueAlias
+    fontFamily: Comic Neue
   layout: elk
   elk:
     nodePlacementStrategy: BRANDES_KOEPF
@@ -49,10 +49,11 @@ graph TD
 ![Architecture diagram](architecture.svg)
 
 The source above is kept in sync with `architecture.mmd`, and both rely on
-`architecture-font.css` (see its header comment for the two Chromium/mermaid
-quirks it works around: multi-word font names failing to resolve inside SVG
-`<foreignObject>`, and mermaid underestimating this font's label width).
-Regenerate the SVG with:
+`architecture-font.css` (see its header comment): the actual Comic Neue font
+bytes are embedded there directly, so the diagram renders correctly for
+anyone opening it regardless of whether they have that font installed, plus
+a fix for mermaid underestimating this font's label width. Regenerate the
+SVG with:
 
 ```sh
 ./scripts/render-architecture-diagram.sh
