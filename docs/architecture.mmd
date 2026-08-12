@@ -1,0 +1,43 @@
+---
+config:
+  look: handDrawn
+  theme: neutral
+  themeVariables:
+    fontFamily: ComicNeueAlias
+  layout: elk
+  elk:
+    nodePlacementStrategy: BRANDES_KOEPF
+---
+graph TD
+    subgraph remote_machine["<b>Remote machine</b>"]
+        remote["<b>Browser</b>"]
+    end
+
+    subgraph local_machine["<b>Local machine</b>"]
+        direction LR
+        host["<b>Admin Page</b>"]
+        local["<b>Browser"]
+        
+        subgraph docker["<b>Docker network</b>"]
+            direction LR
+            editor["<b>Memory Editor</b>"]
+            st["<b>SillyTavern</b><br/>chat frontend"]
+            ollama["<b>Ollama</b><br/>LLM inference"]
+
+            subgraph memory["<b>Agent memory</b>"]
+            direction LR
+                mem0["<b>mem0</b><br/>memory management"]
+                qdrant["<b>Qdrant</b><br/>memory storage/query"]
+            end
+        end
+    end
+
+    remote -- Remote Access --> st
+    host -- User Interface --> editor
+    local -- Local Access --> st
+    editor -- Management --> memory
+
+    ollama -- Text Generation --> st
+    st -- Chat History --> memory
+    ollama -- Memory Extraction --> memory
+    mem0 -- Memory Store --> qdrant
