@@ -167,40 +167,15 @@ Confirmed by starting a real router-mode container with a `--models-preset`
 INI file listing both the chat model and the embedding model, then loading
 both at once and querying each — they coexisted fine, `GET /models` showed
 both `"loaded"`, combined VRAM was 3677 MiB (well under the 6 GB card).
-Preset format (one `[section]` per model, keys match CLI flag names without
-the leading dashes):
 
-```ini
-[gemma-q4]
-model = /models/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf
-jinja = 1
-ctx-size = 16384
-n-gpu-layers = 99
-temp = 1.0
-top-p = 0.95
-top-k = 64
-cache-type-k = q8_0
-cache-type-v = q8_0
+This is now what actually runs: `docker-compose.yml`'s `llama-cpp` service,
+configured from `llama-cpp/models-preset.ini` — three sections (`gemma-q4`,
+`gemma-q8`, `nomic-embed-text-v1.5`; the embedder's section name is kept in
+sync with the hardcoded model string in `mem0-service/main.py`'s embedder
+config). One `[section]` per model, keys match CLI flag names without the
+leading dashes.
 
-[gemma-q8]
-model = /models/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q8_K_P.gguf
-jinja = 1
-ctx-size = 16384
-n-gpu-layers = 99
-temp = 1.0
-top-p = 0.95
-top-k = 64
-cache-type-k = q8_0
-cache-type-v = q8_0
-
-[nomic-embed]
-model = /models/nomic-embed-text-v1.5.f16.gguf
-embeddings = 1
-ctx-size = 2048
-n-gpu-layers = 99
-```
-
-Run with `--models-preset preset.ini --models-max 2` — not 3: Q4 (~3.3 GB)
+Run with `--models-preset ... --models-max 2` — not 3: Q4 (~3.3 GB)
 and Q8 (~5+ GB) can't both fit alongside the embedder on a 6 GB card, so
 `--models-max 2` keeps the embedder resident (touched on every mem0 call)
 plus whichever chat model was used most recently, and LRU-evicts the other
@@ -213,20 +188,21 @@ this preset covers the LLM (both quants) and the embedder together.
 
 ### Switching Q4 <-> Q8 from SillyTavern
 
-Confirmed directly in SillyTavern's own source
+Works, confirmed in real use against the dev stack: the Text Completion
+"llama.cpp" API connection, actual chat conversations, and switching
+between `gemma-q4` and `gemma-q8` from the connection's model dropdown all
+tested working directly in the SillyTavern UI.
+
+This wasn't built for this project — it's existing, native SillyTavern
+functionality, traced through its own source
 (`public/scripts/textgen-models.js`, `public/scripts/textgen-settings.js`
-inside the `sillytavern` container): the Text Completion "llama.cpp" source
-already has full native model-switching support, unrelated to anything
-built for this project. `loadLlamaCppModels()` populates a `#llamacpp_model`
-dropdown from the connected server's model list (`GET /models` — the exact
-endpoint router mode exposes), and the selected value is sent as `model` in
-every generation request (`textgen-settings.js`'s `getModel()`, `LLAMACPP`
-case). With the preset above running, that dropdown would show `gemma-q4`,
-`gemma-q8`, and `nomic-embed`, and picking `gemma-q4` or `gemma-q8` there
-switches the roleplay model live — the router server loads/evicts on that
-request the same way it did in testing (a request each way after the very
-first taking roughly 10-20s once the container's already up, per "Model
-switching" above).
+inside the `sillytavern` container) before the live test: `loadLlamaCppModels()`
+populates the `#llamacpp_model` dropdown from the connected server's model
+list (`GET /models` — the exact endpoint router mode exposes), and the
+selected value is sent as `model` in every generation request
+(`textgen-settings.js`'s `getModel()`, `LLAMACPP` case) — which is exactly
+what makes router mode's on-demand load/evict kick in per the switch times
+under "Model switching" above.
 
 ## Raw data
 
