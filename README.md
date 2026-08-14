@@ -4,10 +4,10 @@ This is a self-hosted roleplay/chat setup that runs entirely on your own hardwar
 
 ## The pieces
 
-- **Ollama** runs the actual language model on your GPU. One model handles both the roleplay replies and the memory extraction.
+- **llama.cpp** runs the actual language model on your GPU. One model handles both the roleplay replies and the memory extraction. (This replaced Ollama for a measured performance gain; see [docs/LLAMA_CPP_BENCHMARK.md](docs/LLAMA_CPP_BENCHMARK.md) for the comparison.)
 - **Qdrant** is the vector database that memories actually live in.
 - **mem0** is the memory engine sitting on top of Qdrant — it decides what's worth remembering from a conversation, stores it, and pulls relevant memories back out when they're needed.
-- **SillyTavern** is the chat frontend you actually talk to. It's wired up to Ollama for generation and to mem0 through a custom plugin + extension pair that injects relevant memories into the prompt and sends new facts back after each exchange.
+- **SillyTavern** is the chat frontend you actually talk to. It's wired up to llama.cpp for generation and to mem0 through a custom plugin + extension pair that injects relevant memories into the prompt and sends new facts back after each exchange.
 
 Everything runs in Docker on one machine. Only SillyTavern is exposed beyond localhost — reachable locally, or from another device over Tailscale — with basic auth and an IP whitelist on top for access control.
 
@@ -72,7 +72,7 @@ git clone https://github.com/chuyaowang/local-sillytavern-with-memory.git
 cd local-sillytavern-with-memory
 ```
 
-**2. Bring your own model.** The model files aren't in this repo (they're multi-gigabytes). Drop one in `models/`, then point `models/Modelfile`'s `FROM` line at its filename. The default model, which has been tested to work, is [a quantized and abliterated Gemma 4 E4B model](https://huggingface.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive/blob/main/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf), which fits in the 6GB VRAM of a NVIDIA GTX 1660Ti card. The `num_ctx` in `Modelfile` needs to be at least 16384 — the memory extraction prompt alone is around 8,000 tokens, and a smaller context window will silently truncate it and break extraction.
+**2. Bring your own model.** The model files aren't in this repo (they're multi-gigabytes). Drop one in `models/`, then point `llama-cpp/models-preset.ini`'s `model =` line at its filename. The default model, which has been tested to work, is [a quantized and abliterated Gemma 4 E4B model](https://huggingface.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive/blob/main/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf), which fits in the 6GB VRAM of a NVIDIA GTX 1660Ti card. The preset's `ctx-size` needs to stay at 16384 or higher — the memory extraction prompt alone is around 8,000 tokens, and a smaller context window will silently truncate it and break extraction.
 
 See [Changing the model](#changing-the-model) below if you want to switch to a different one later.
 
@@ -84,21 +84,20 @@ cp sillytavern/config/config.yaml.example sillytavern/config/config.yaml
 
 Then edit that file and set a real `basicAuthUser.username`/`password`, and add the actual Tailscale IPs of whatever devices should be able to reach it to the `whitelist` array (`tailscale status` will show you those IPs).
 
-**4. Start Ollama and import your model.** This takes a few minutes for a multi-gigabyte file. The last line pulls `nomic-embed-text`, the embedding model mem0 uses to turn memories into vectors for Qdrant — it comes straight from Ollama's library, no manual download needed:
+**4. Get the embedding model.** mem0 uses this to turn memories into vectors for Qdrant. Download it straight into `models/`:
 
 ```bash
-docker compose up -d ollama
-docker exec -w /import ollama ollama create gemma4-e4b-hauhaucs -f Modelfile
-docker exec ollama ollama pull nomic-embed-text
+curl -L -o models/nomic-embed-text-v1.5.f16.gguf \
+  https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.f16.gguf
 ```
 
-**5. Bring up everything else:**
+**5. Bring up everything:**
 
 ```bash
 docker compose up -d
 ```
 
-**6. Point SillyTavern at Ollama.** In the SillyTavern UI, go to API Connections, set API type to Text Completion and source to Ollama, Server URL to `http://ollama:11434`, then pick your model from the dropdown. It may take a few minutes for the model to show up in the dropdown menu.
+**6. Point SillyTavern at llama.cpp.** In the SillyTavern UI, go to API Connections, set API type to Text Completion and source to llama.cpp, Server URL to `http://llama-cpp:8080`, then pick your model from the dropdown.
 
 **7. Turn on the memory extension.** In SillyTavern, go to Manage Extensions tab on the top band and enable "Roleplay Memory" — that's what actually wires the chat up to mem0.
 
@@ -112,42 +111,37 @@ There's also an optional `docker-compose.prod.yml` overlay for running a second,
 
 ## Changing the model
 
-1. **Download a GGUF.** Any Ollama-compatible GGUF works — grab one from Hugging Face or wherever you like. Place it in `models/`. Note that the actual VRAM used is **less than** the size of the GGUF file. For example, the Gemma 4 E4B Q4 model tested uses ~2.9 GB VRAM while the GGUF file size is ~5.4 GB, because not everything in the model needs to be loaded to the GPU.
-2. **Point `models/Modelfile` at it.** Edit the `FROM ./<filename>.gguf` line to match, and make sure `num_ctx` stays at 16384 or higher — mem0's extraction prompt alone is around 8,000 tokens, and a smaller context window silently truncates it and breaks extraction.
-3. **Import it into Ollama under a new tag**, so your current model stays available until you're sure the new one works:
+1. **Download a GGUF.** Grab one from Hugging Face or wherever you like. Place it in `models/`. Note that the actual VRAM used is **less than** the size of the GGUF file — not everything in the model needs to be loaded to the GPU (e.g. the token embedding table typically stays on CPU).
+2. **Add it to `llama-cpp/models-preset.ini`.** Copy an existing `[section]`, give it a new name, and point `model =` at your filename. Keep `ctx-size` at 16384 or higher — mem0's extraction prompt alone is around 8,000 tokens, and a smaller context window silently truncates it and breaks extraction. If VRAM is tight for this quant, see the `gemma-q8` section's comments for the `--fit`/`n-gpu-layers` tradeoff.
+3. **Restart llama.cpp** so it picks up the new preset:
 
    ```bash
-   docker exec -w /import ollama ollama create <new-model-tag> -f Modelfile
+   docker compose restart llama-cpp
    ```
 
 4. **Test it before committing to it:**
 
    ```bash
-   ./scripts/test-model.sh <new-model-tag>
+   ./scripts/test-model-llama-cpp.sh <new-section-name>
    ```
 
-   This checks text generation, VRAM footprint vs. Ollama's own estimate, and whether the model breaks mem0's memory extraction (including a JSON-syntax check mem0 itself doesn't surface on its own). Pick a different model if anything fails.
-5. **Switch mem0 over to it.** Update `MEM0_LLM_MODEL:` in `docker-compose.yml` (and `docker-compose.prod.yml`, if you run the prod stack too) to `<new-model-tag>`, then rebuild and restart:
-
-   ```bash
-   docker compose build mem0
-   docker compose up -d mem0
-   ```
-
-6. **Point SillyTavern at it.** In the SillyTavern UI, API Connections, re-pick the new model from the dropdown (same place as setup step 6 above).
+   This checks text generation, VRAM footprint, and whether the model breaks mem0's memory extraction against a throwaway container, not your real data. Pick a different model if anything fails.
+5. **Point SillyTavern at it.** API Connections, re-pick the new model from the dropdown (same place as setup step 6 above). mem0 follows automatically — it reads whichever model SillyTavern is actually using on every request, so there's no separate mem0 config to update.
 
 ### Models checked so far
 
-Results from running `scripts/test-model.sh` against each model, for reference:
+Results from running `scripts/test-model-llama-cpp.sh` against each model, for reference:
 
-| Model | Text generation | VRAM footprint (actual / Ollama's estimate) | Extraction JSON syntax | Extraction pipeline |
+| Model | Text generation | VRAM footprint (actual) | Extraction JSON syntax | Extraction pipeline |
 | --- | --- | --- | --- | --- |
-| [Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q4_K_P](https://huggingface.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive/blob/main/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf) | Pass | ~2.9 GB / ~3.0 GB | Pass | Pass |
-| [Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q8_K_P](https://huggingface.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive/blob/main/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q8_K_P.gguf) | Pass | ~4.7 GB / ~4.4 GB | Pass | Pass |
+| [Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q4_K_P](https://huggingface.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive/blob/main/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf) | Pass | ~3.3 GB | Pass | Pass |
+| [Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q8_K_P](https://huggingface.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive/blob/main/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q8_K_P.gguf) | Pass | ~4.7-5.7 GB | Pass | Pass |
+
+Q8 fits, but with a real speed tradeoff when the embedder also needs VRAM — see [docs/LLAMA_CPP_BENCHMARK.md](docs/LLAMA_CPP_BENCHMARK.md) for the full story. Q4 is the safer everyday default.
 
 ## Setting up a dev vs. prod environment
 
-By default you have one stack — `qdrant`, `mem0`, `sillytavern` — which is fine if you're not planning to test changes against the memories and chats you actually use day to day. `docker-compose.prod.yml` adds a second, fully isolated stack (`qdrant-prod`, `mem0-prod`, `sillytavern-prod`) so you can develop or try things out without touching your real data. The two stacks share only Ollama (GPU/VRAM is the scarce resource, no reason to load the model twice) and the SillyTavern plugin/extension source code; everything else — config, memory data, chat history — is completely separate.
+By default you have one stack — `qdrant`, `mem0`, `sillytavern` — which is fine if you're not planning to test changes against the memories and chats you actually use day to day. `docker-compose.prod.yml` adds a second, fully isolated stack (`qdrant-prod`, `mem0-prod`, `sillytavern-prod`) so you can develop or try things out without touching your real data. The two stacks share only llama.cpp (GPU/VRAM is the scarce resource, no reason to load the model twice) and the SillyTavern plugin/extension source code; everything else — config, memory data, chat history — is completely separate.
 
 ### Creating the prod stack
 
@@ -172,11 +166,11 @@ The Makefile wraps the underlying `docker compose -f docker-compose.yml -f docke
 
 | Command | What it does |
 | --- | --- |
-| `make dev-up` | Start the dev stack (`qdrant`, `mem0`, `sillytavern`), plus Ollama if it isn't already running |
-| `make dev-down` | Stop the dev stack, leave Ollama and prod running |
-| `make prod-up` | Start the prod stack, plus Ollama if it isn't already running |
-| `make prod-down` | Stop the prod stack, leave Ollama and dev running |
-| `make down` | Stop everything, including Ollama |
+| `make dev-up` | Start the dev stack (`qdrant`, `mem0`, `sillytavern`), plus llama.cpp if it isn't already running |
+| `make dev-down` | Stop the dev stack, leave llama.cpp and prod running |
+| `make prod-up` | Start the prod stack, plus llama.cpp if it isn't already running |
+| `make prod-down` | Stop the prod stack, leave llama.cpp and dev running |
+| `make down` | Stop everything that's running |
 | `make status` | Show what's currently running |
 
 `make dev-up` and `make prod-up` each print that stack's SillyTavern and memory-manager URLs once it's up — dev on `:8000`/`:8001`, prod on `:8010`/`:8011`. Run bare `make` to see this list at any time.
@@ -188,10 +182,10 @@ This repo's own code is Apache-2.0 (see [LICENSE](LICENSE)), but it wires togeth
 | Component | License |
 | --- | --- |
 | [SillyTavern](https://github.com/SillyTavern/SillyTavern) | AGPL-3.0 |
-| [Ollama](https://github.com/ollama/ollama) | MIT |
+| [llama.cpp](https://github.com/ggml-org/llama.cpp) | MIT |
 | [Qdrant](https://github.com/qdrant/qdrant) | Apache-2.0 |
 | [mem0](https://github.com/mem0ai/mem0) | Apache-2.0 |
 | [nomic-embed-text](https://huggingface.co/nomic-ai/nomic-embed-text-v1.5) | Apache-2.0 |
 | Gemma models (base and fine-tunes) | [Gemma Terms of Use](https://ai.google.dev/gemma/terms) — a custom license with a prohibited-use policy, not a standard OSI license |
 
-None of these are vendored into this repo — SillyTavern, Ollama, and Qdrant run as their own upstream Docker images, and the model GGUF is something you bring yourself (see step 2 above). SillyTavern's AGPL-3.0 doesn't extend to the server plugin or client extension in this repo, since they're separate code loaded through SillyTavern's public plugin/extension API, not a modified copy of SillyTavern itself.
+None of these are vendored into this repo — SillyTavern, llama.cpp, and Qdrant run as their own upstream Docker images, and the model GGUF is something you bring yourself (see step 2 above). SillyTavern's AGPL-3.0 doesn't extend to the server plugin or client extension in this repo, since they're separate code loaded through SillyTavern's public plugin/extension API, not a modified copy of SillyTavern itself.
