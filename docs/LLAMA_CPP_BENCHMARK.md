@@ -134,6 +134,33 @@ a genuinely fresh load — the scaling with file size and load_duration
 numbers here are consistent enough with real disk reads to trust, but this
 is an acknowledged gap in how cleanly the two backends were measured.
 
+## mem0 integration
+
+`scripts/test-model-llama-cpp.sh` (adapted from `scripts/test-model.sh`)
+checks whether llama.cpp can serve as mem0's backend for both the LLM and
+the embedder — an all-llama.cpp pipeline, no Ollama in the loop at all.
+mem0-service now supports this via `MEM0_LLM_PROVIDER=openai` /
+`MEM0_EMBEDDER_PROVIDER=openai`, pointing at llama.cpp's OpenAI-compatible
+API instead of Ollama's own (`mem0-service/main.py`). The embedder needs
+its own llama-server process — a chat model and an embedding model can't
+share one — running `models/nomic-embed-text-v1.5.f16.gguf`, downloaded
+from Hugging Face (`nomic-ai/nomic-embed-text-v1.5-GGUF`) and confirmed to
+be the exact same model Ollama uses (matching file size against Ollama's
+own blob for it).
+
+Result: it works. Both the extraction JSON-syntax check and the end-to-end
+extraction pipeline check passed, producing the same kind of sensible
+extracted facts mem0 produces with Ollama.
+
+One real finding along the way: this model emits a separate "thinking"
+block (`reasoning_content`) before its actual reply, and at llama-server's
+bare default sampling settings, it sometimes spent the *entire* token
+budget on that reasoning and never produced a reply at all — even at 512
+tokens. Using the project's actual sampling settings (`models/Modelfile`:
+temperature 1.0, top_p 0.95, top_k 64) fixed it reliably. Worth knowing if
+this model is ever pointed at through a client that doesn't set those —
+llama-server's own defaults aren't safe for it.
+
 ## Raw data
 
 Full JSON responses (every `timings`/duration field, per turn, per backend)

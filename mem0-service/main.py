@@ -27,21 +27,63 @@ MEM0_LLM_MODEL = os.environ.get("MEM0_LLM_MODEL", "gemma4-e4b-hauhaucs")
 # scratch collection instead of the real "roleplay_memories" store.
 QDRANT_COLLECTION = os.environ.get("QDRANT_COLLECTION", "roleplay_memories")
 
-config = {
-    "llm": {
+# Lets a throwaway container (e.g. scripts/test-model-llama-cpp.sh) point the
+# LLM at a different backend entirely -- llama.cpp's server speaks the
+# OpenAI-compatible API, not Ollama's, so this needs its own provider and
+# base URL rather than just swapping the model name. Defaults preserve the
+# existing Ollama-only behavior for the real dev/prod containers.
+MEM0_LLM_PROVIDER = os.environ.get("MEM0_LLM_PROVIDER", "ollama")
+MEM0_LLM_BASE_URL = os.environ.get("MEM0_LLM_BASE_URL", OLLAMA_BASE_URL)
+
+if MEM0_LLM_PROVIDER == "openai":
+    llm_config = {
+        "provider": "openai",
+        "config": {
+            "model": MEM0_LLM_MODEL,
+            "openai_base_url": MEM0_LLM_BASE_URL,
+            # llama.cpp's server doesn't check this, but the openai client
+            # library requires a non-empty key to be set.
+            "api_key": "not-needed",
+        },
+    }
+else:
+    llm_config = {
         "provider": "ollama",
         "config": {
             "model": MEM0_LLM_MODEL,
-            "ollama_base_url": OLLAMA_BASE_URL,
+            "ollama_base_url": MEM0_LLM_BASE_URL,
         },
-    },
-    "embedder": {
+    }
+
+# Same swap for the embedder -- lets a throwaway container point it at a
+# llama.cpp server running the same nomic-embed-text-v1.5 GGUF instead of
+# Ollama's copy, so an all-llama.cpp pipeline can be tested without Ollama
+# in the loop at all. Defaults preserve the existing Ollama-only behavior.
+MEM0_EMBEDDER_PROVIDER = os.environ.get("MEM0_EMBEDDER_PROVIDER", "ollama")
+MEM0_EMBEDDER_BASE_URL = os.environ.get("MEM0_EMBEDDER_BASE_URL", OLLAMA_BASE_URL)
+
+if MEM0_EMBEDDER_PROVIDER == "openai":
+    embedder_config = {
+        "provider": "openai",
+        "config": {
+            "model": "nomic-embed-text-v1.5",
+            "openai_base_url": MEM0_EMBEDDER_BASE_URL,
+            "api_key": "not-needed",
+            "embedding_dims": 768,
+        },
+    }
+else:
+    embedder_config = {
         "provider": "ollama",
         "config": {
             "model": "nomic-embed-text",
-            "ollama_base_url": OLLAMA_BASE_URL,
+            "ollama_base_url": MEM0_EMBEDDER_BASE_URL,
         },
-    },
+    }
+
+config = {
+    "llm": llm_config,
+    "embedder": embedder_config,
     "vector_store": {
         "provider": "qdrant",
         "config": {
