@@ -351,16 +351,11 @@ model.
 - [ ] Memory-editing tool — a way to browse/correct/delete stored memories
       outside of steering a live conversation. Motivated `mem0-service` being
       a standalone service rather than embedded in the extension/plugin.
-- [ ] `sillytavern-prod`'s Text Completion connection has `type: llamacpp`
-      set, but `llamacpp_model` is empty (checked directly in its
-      `settings.json`) — nobody's actually picked a model from the dropdown
-      there yet, unlike the dev instance. Extraction still works either way
-      (falls back to `mem0`'s configured default), but roleplay generation
-      itself won't work in prod until this is done through its UI.
-- [ ] Decide whether to delete the now-unused Ollama-era files
-      (`models/Modelfile`, `models/Modelfile.q8`, `scripts/test-model.sh`)
-      or keep them as a reference in case of ever falling back to Ollama.
-      Nothing references them anymore.
+- [x] `sillytavern-prod`'s Text Completion connection now has `llamacpp_model:
+      gemma-q4` set (was empty) — confirmed directly in its `settings.json`.
+- [x] Ollama-era files (`models/Modelfile`, `models/Modelfile.q8`,
+      `scripts/test-model.sh`) are kept intentionally, as a reference in
+      case of ever falling back to Ollama — not dead weight to clean up.
 - [ ] Decide `ollama`'s longer-term fate — currently kept fully defined but
       unused as a zero-risk fallback (see "Architecture" above), not a
       permanent decision.
