@@ -25,7 +25,7 @@ graph TD
             direction LR
             editor["<b>Memory Editor</b>"]
             st["<b>SillyTavern</b><br/>chat frontend"]
-            ollama["<b>Ollama</b><br/>LLM inference"]
+            llamacpp["<b>llama.cpp</b><br/>LLM inference"]
 
             subgraph memory["<b>Agent memory</b>"]
             direction LR
@@ -40,9 +40,9 @@ graph TD
     local -- Local Access --> st
     editor -- Management --> memory
 
-    ollama -- Text Generation --> st
+    llamacpp -- Text Generation --> st
     st -- Chat History --> memory
-    ollama -- Memory Extraction --> memory
+    llamacpp -- Memory Extraction --> memory
     mem0 -- Memory Store --> qdrant
 ```
 
@@ -65,7 +65,7 @@ saved SVG's own `<style>`, so the file is self-contained and the script
 mainly exists so the exact command doesn't need re-deriving each time.
 
 - **SillyTavern** — the chat UI. Only component exposed beyond `127.0.0.1`, reachable over Tailscale on `:8000`.
-- **Ollama** — runs the local model (one model for both roleplay replies and memory extraction) plus the embedding model.
+- **llama.cpp** — runs the local model (one model for both roleplay replies and memory extraction) plus the embedding model.
 - **mem0-service** — decides what's worth remembering, sorts it into shared-vs-per-character, stores/retrieves it, and serves a small web UI for managing memories by hand.
 - **Qdrant** — where the memory vectors actually live.
 

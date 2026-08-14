@@ -22,7 +22,7 @@ graph TD
             direction LR
             editor["<b>Memory Editor</b>"]
             st["<b>SillyTavern</b><br/>chat frontend"]
-            ollama["<b>Ollama</b><br/>LLM inference"]
+            llamacpp["<b>llama.cpp</b><br/>LLM inference"]
 
             subgraph memory["<b>Agent memory</b>"]
             direction LR
@@ -37,7 +37,7 @@ graph TD
     local -- Local Access --> st
     editor -- Management --> memory
 
-    ollama -- Text Generation --> st
+    llamacpp -- Text Generation --> st
     st -- Chat History --> memory
-    ollama -- Memory Extraction --> memory
+    llamacpp -- Memory Extraction --> memory
     mem0 -- Memory Store --> qdrant
