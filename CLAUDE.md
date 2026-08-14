@@ -179,8 +179,11 @@ the shared/character split above:
   2. **Active**, via a **World Creator** agent: a plain SillyTavern
      character (not a special API flag — ST's character panel has no UI
      for arbitrary custom `extensions` fields) that must be named exactly
-     `World Weaver`, detected client-side by name. Talked to like any
-     character; its exchanges route to `POST /worlds/interview` instead of
+     `World Weaver`, detected client-side by name. Card JSON lives at
+     `sillytavern/character-cards/world-weaver.json` (import via ST's
+     character panel, once per environment — not auto-installed). Talked
+     to like any character; its exchanges route to `POST /worlds/interview`
+     instead of
      the normal `/add` path — a dedicated extraction prompt
      (`WORLD_INTERVIEW_PROMPT`) identifies both the world's name *and* its
      facts from the interview transcript, since (unlike a roleplay
