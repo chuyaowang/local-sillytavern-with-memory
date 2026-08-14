@@ -229,8 +229,13 @@ async function onMessageReceived() {
     buffer.push({ role: 'assistant', content: lastAssistant.mes });
     bufferCharCount += lastUser.mes.length + lastAssistant.mes.length;
 
+    // World Weaver exchanges are low-volume and deliberate -- batching them
+    // the same way as ordinary roleplay risks losing an answer if the tab
+    // closes before the token threshold or idle timer would have flushed
+    // (the buffer only lives in this tab's memory, never persisted), so
+    // flush after every single exchange instead of waiting.
     const explicitTrigger = containsTriggerPhrase(lastUser.mes);
-    if (explicitTrigger || estimateTokens(bufferCharCount) >= TOKEN_THRESHOLD) {
+    if (isWorldCreatorActive() || explicitTrigger || estimateTokens(bufferCharCount) >= TOKEN_THRESHOLD) {
         await flushBuffer();
     } else {
         scheduleIdleFlush();
