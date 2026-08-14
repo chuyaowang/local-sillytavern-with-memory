@@ -12,6 +12,9 @@ sillytavern-prod/data/
 # tracked so the setup is reproducible; the GGUFs themselves are not.
 models/*.gguf
 
+# Benchmark run outputs -- reproducible on demand, not source
+scripts/bench-results/
+
 # Misc
 .DS_Store
 node_modules/
