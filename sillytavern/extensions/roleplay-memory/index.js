@@ -12,6 +12,28 @@ function getIds() {
     };
 }
 
+// Reuses ST's own "Primary Lorebook" character binding (the globe icon in
+// the character panel, character.data.extensions.world) instead of a
+// separate mapping -- confirmed this session that ST never rewrites the
+// bound world file on its own, so it's safe to treat this field as pure
+// metadata once that file's entries are emptied out. See CLAUDE.md.
+function getBoundWorld() {
+    const context = SillyTavern.getContext();
+    const character = context.characters?.[context.characterId];
+    return slugify(character?.data?.extensions?.world);
+}
+
+// The World Creator is a plain SillyTavern character (not a special API
+// flag -- ST's character panel has no UI for arbitrary custom extensions
+// fields), detected by name alone. Must be named exactly this in ST.
+const WORLD_CREATOR_NAME = 'world-weaver';
+
+function isWorldCreatorActive() {
+    const context = SillyTavern.getContext();
+    const character = context.characters?.[context.characterId];
+    return slugify(character?.name) === WORLD_CREATOR_NAME;
+}
+
 // Roleplay and memory extraction are supposed to always share one model
 // (see CLAUDE.md). Sending this with every flush is what makes that
 // automatic instead of a manually-maintained convention -- mem0-service
@@ -67,11 +89,13 @@ globalThis.roleplayMemoryInterceptor = async function (chat, contextSize, abort,
     if (!query) return;
 
     const { userId, agentId } = getIds();
+    const world = getBoundWorld();
     const context = SillyTavern.getContext();
 
     try {
         const params = new URLSearchParams({ user_id: userId, query });
         if (agentId) params.set('agent_id', agentId);
+        if (world) params.set('world', world);
         const response = await fetch(`/api/plugins/roleplay-memory/context?${params}`);
         if (!response.ok) return;
         const data = await response.json();
@@ -80,8 +104,14 @@ globalThis.roleplayMemoryInterceptor = async function (chat, contextSize, abort,
             ...(data.shared?.results || []),
             ...(data.character?.results || []),
         ].map((r) => r.memory);
+        const lore = (data.world?.results || []).map((r) => r.memory);
 
-        const value = facts.length > 0 ? `Relevant memories: ${facts.join(' | ')}` : '';
+        const parts = [];
+        if (facts.length > 0) parts.push(`Relevant memories: ${facts.join(' | ')}`);
+        // Kept as a distinct labeled line from character/shared memory so
+        // the model can tell setting lore apart from relationship history.
+        if (lore.length > 0) parts.push(`World lore: ${lore.join(' | ')}`);
+        const value = parts.join('\n');
 
         // Always call this, even with an empty value -- otherwise a turn
         // with no relevant facts would leave the *previous* turn's note
@@ -143,17 +173,37 @@ async function flushBuffer() {
     bufferCharCount = 0;
 
     const { userId, agentId } = getIds();
+    const world = getBoundWorld();
     const model = getActiveModel();
+    const isWorldCreator = isWorldCreatorActive();
 
     try {
         // POST requests need an X-CSRF-Token header or ST's CSRF middleware
         // rejects them with 403, even with a valid session/basic-auth.
         const { token } = await (await fetch('/csrf-token')).json();
-        await fetch('/api/plugins/roleplay-memory/add', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token },
-            body: JSON.stringify({ messages, user_id: userId, agent_id: agentId || undefined, model: model || undefined }),
-        });
+        if (isWorldCreator) {
+            // The World Creator interview isn't bound to one fixed world the
+            // way a roleplay character is -- the plugin/mem0-service side
+            // identifies world name(s) from the transcript itself, and this
+            // writes world-scoped memory only (no shared/character write).
+            await fetch('/api/plugins/roleplay-memory/interview', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token },
+                body: JSON.stringify({ messages, model: model || undefined }),
+            });
+        } else {
+            await fetch('/api/plugins/roleplay-memory/add', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token },
+                body: JSON.stringify({
+                    messages,
+                    user_id: userId,
+                    agent_id: agentId || undefined,
+                    model: model || undefined,
+                    world: world || undefined,
+                }),
+            });
+        }
     } catch (err) {
         console.error('[roleplay-memory] flush failed:', err);
     }
