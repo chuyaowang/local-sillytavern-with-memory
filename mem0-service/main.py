@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -173,9 +174,23 @@ class AddMemoryRequest(BaseModel):
     # which of memories_by_model handles this call. Falls back to
     # MEM0_LLM_MODEL if unset or unrecognized.
     model: Optional[str] = None
+    # The world the active character is bound to (from its ST card's
+    # extensions.world field, reused rather than a separate mapping -- see
+    # CLAUDE.md). When set, classify_facts() also checks this exchange for
+    # world-relevant facts, alongside the existing shared-fact check.
+    world: Optional[str] = None
 
 
 class ExtractionRawRequest(BaseModel):
+    messages: list[dict]
+    model: Optional[str] = None
+
+
+class AddWorldLoreRequest(BaseModel):
+    content: str
+
+
+class WorldInterviewRequest(BaseModel):
     messages: list[dict]
     model: Optional[str] = None
 
@@ -194,6 +209,21 @@ class BulkReplaceRequest(BaseModel):
 
 SHARED_AGENT_ID = "shared"
 
+# World lore isn't "about" any real user at all, so it gets its own user_id
+# sentinel rather than reusing the agent_id axis SHARED_AGENT_ID occupies --
+# a world name is just an agent_id value under this sentinel ("eldoria",
+# "kivotos", ...), so multiple worlds need no per-world schema. Same
+# collision precedent already accepted for SHARED_AGENT_ID: a real user
+# literally slugifying to "world" would collide, same acceptable edge case.
+WORLD_USER_ID = "world"
+
+
+def _slugify(value: str) -> str:
+    # Mirrors sillytavern/extensions/roleplay-memory/index.js's slugify() so
+    # a world name matches however the ST extension derived it client-side.
+    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+    return slug or None
+
 
 def _scope(user_id: str, agent_id: Optional[str]) -> dict:
     # Every memory gets a real agent_id -- the SHARED_AGENT_ID sentinel when
@@ -204,41 +234,68 @@ def _scope(user_id: str, agent_id: Optional[str]) -> dict:
     return {"user_id": user_id, "agent_id": agent_id or SHARED_AGENT_ID}
 
 
-CLASSIFICATION_PROMPT = """You are analyzing a conversation to identify general facts about the user.
+CLASSIFICATION_PROMPT_TEMPLATE = """You are analyzing a conversation to identify two kinds of facts.
 
-A general fact is true about the user regardless of who they are talking to -- personal
-preferences, biographical details, opinions, or traits. Examples: favorite food, job,
-hobbies, fears, birthday.
+1. General facts about the user: true about the user regardless of who they are talking
+to -- personal preferences, biographical details, opinions, or traits. Examples:
+favorite food, job, hobbies, fears, birthday.
 
-NOT a general fact: anything specific to this particular conversation partner or
-storyline -- shared experiences, in-story events, relationship dynamics, or things that
-only make sense in the context of this specific character.
+{world_section}
+
+NOT either category: anything specific to this particular character relationship --
+shared experiences, in-story events, relationship dynamics, or a character's own
+personality/traits, none of which are facts about the user or about the setting.
 
 Return ONLY valid JSON in this exact shape:
-{"shared_facts": ["fact one", "fact two"]}
+{{"shared_facts": ["fact one", "fact two"], "world_facts": ["fact one", "fact two"]}}
 
-If there are no general facts, return {"shared_facts": []}.
+If there are no facts of a given kind, return an empty list for it.
 """
 
+WORLD_SECTION_TEMPLATE = """2. Facts about the setting/world "{world}": geography, history, factions, cultures,
+rules of magic or technology -- lore about the world itself, not about the user or
+about any one character's personality."""
 
-def classify_shared_facts(mem: "Memory", messages: list[dict]) -> list[str]:
+
+def classify_facts(mem: "Memory", messages: list[dict], world: Optional[str] = None) -> dict:
     # Best-effort: this is a secondary enrichment step layered on top of the
     # primary (always-succeeds) character-scoped write below, so any failure
     # here is swallowed rather than breaking the add() call.
     transcript = "\n".join(f"{m.get('role', 'user')}: {m.get('content', '')}" for m in messages)
+    world_section = WORLD_SECTION_TEMPLATE.format(world=world) if world else ""
+    prompt = CLASSIFICATION_PROMPT_TEMPLATE.format(world_section=world_section)
     try:
         response = mem.llm.generate_response(
             messages=[
-                {"role": "system", "content": CLASSIFICATION_PROMPT},
+                {"role": "system", "content": prompt},
                 {"role": "user", "content": transcript},
             ],
             response_format={"type": "json_object"},
         )
         data = json.loads(response)
-        facts = data.get("shared_facts", [])
-        return [f for f in facts if isinstance(f, str) and f.strip()]
+        shared_facts = data.get("shared_facts", [])
+        world_facts = data.get("world_facts", []) if world else []
+        return {
+            "shared_facts": [f for f in shared_facts if isinstance(f, str) and f.strip()],
+            "world_facts": [f for f in world_facts if isinstance(f, str) and f.strip()],
+        }
     except Exception:
-        return []
+        return {"shared_facts": [], "world_facts": []}
+
+
+WORLD_INTERVIEW_PROMPT = """You are analyzing a world-building interview conversation between a user and an
+assistant helping them design a fictional setting.
+
+Identify every distinct world discussed (usually just one) and the facts established
+about each -- geography, history, factions, cultures, rules of magic or technology,
+tone. Only include facts the user actually stated or confirmed, not questions the
+assistant asked.
+
+Return ONLY valid JSON in this exact shape:
+{"worlds": [{"name": "World Name", "facts": ["fact one", "fact two"]}]}
+
+If no world name was established yet, return {"worlds": []}.
+"""
 
 
 @app.get("/health")
@@ -254,12 +311,63 @@ def add_memory(req: AddMemoryRequest):
     # Only classify when this write was character-scoped -- a call already
     # targeting the shared bucket has nothing further to route.
     if req.agent_id:
-        shared_facts = classify_shared_facts(mem, req.messages)
-        if shared_facts:
-            shared_messages = [{"role": "user", "content": fact} for fact in shared_facts]
+        facts = classify_facts(mem, req.messages, world=req.world)
+        if facts["shared_facts"]:
+            shared_messages = [{"role": "user", "content": fact} for fact in facts["shared_facts"]]
             mem.add(shared_messages, user_id=req.user_id, agent_id=SHARED_AGENT_ID, infer=False)
+        if facts["world_facts"]:
+            world_messages = [{"role": "user", "content": fact} for fact in facts["world_facts"]]
+            mem.add(world_messages, user_id=WORLD_USER_ID, agent_id=req.world, infer=False)
 
     return result
+
+
+@app.post("/worlds/{world}/memories")
+def add_world_lore(world: str, req: AddWorldLoreRequest):
+    # Low-level manual write -- used by the one-time lorebook backfill
+    # script, not by either automatic extraction path below. infer=False:
+    # this is already-curated text to embed directly, not something to run
+    # fact-extraction on.
+    return memory.add([{"role": "user", "content": req.content}], user_id=WORLD_USER_ID, agent_id=world, infer=False)
+
+
+@app.post("/worlds/interview")
+def world_interview(req: WorldInterviewRequest):
+    # The World Creator character (see CLAUDE.md) isn't bound to one fixed
+    # world the way a roleplay character is -- the interview conversation
+    # itself establishes what's being built, so this identifies the world
+    # name(s) from the transcript rather than being told one, unlike
+    # classify_facts() above.
+    mem = _pick_memory(req.model)
+    transcript = "\n".join(f"{m.get('role', 'user')}: {m.get('content', '')}" for m in req.messages)
+    try:
+        response = mem.llm.generate_response(
+            messages=[
+                {"role": "system", "content": WORLD_INTERVIEW_PROMPT},
+                {"role": "user", "content": transcript},
+            ],
+            response_format={"type": "json_object"},
+        )
+        data = json.loads(response)
+        worlds = data.get("worlds", [])
+    except Exception:
+        worlds = []
+
+    written = []
+    for entry in worlds:
+        name = entry.get("name") if isinstance(entry, dict) else None
+        facts = entry.get("facts") if isinstance(entry, dict) else None
+        slug = _slugify(name) if isinstance(name, str) else None
+        if not slug or not isinstance(facts, list):
+            continue
+        fact_texts = [f for f in facts if isinstance(f, str) and f.strip()]
+        if not fact_texts:
+            continue
+        fact_messages = [{"role": "user", "content": fact} for fact in fact_texts]
+        memory.add(fact_messages, user_id=WORLD_USER_ID, agent_id=slug, infer=False)
+        written.append({"world": slug, "facts": fact_texts})
+
+    return {"written": written}
 
 
 @app.post("/debug/extraction-raw")
@@ -371,10 +479,11 @@ def search_memories(query: str, user_id: str, agent_id: Optional[str] = None, al
 
 
 @app.get("/memories/context")
-def get_context(query: str, user_id: str, agent_id: Optional[str] = None):
+def get_context(query: str, user_id: str, agent_id: Optional[str] = None, world: Optional[str] = None):
     shared = memory.search(query, filters={"user_id": user_id, "agent_id": SHARED_AGENT_ID})
     character = memory.search(query, filters={"user_id": user_id, "agent_id": agent_id}) if agent_id else []
-    return {"shared": shared, "character": character}
+    lore = memory.search(query, filters={"user_id": WORLD_USER_ID, "agent_id": world}) if world else []
+    return {"shared": shared, "character": character, "world": lore}
 
 
 @app.put("/memories/{memory_id}")
