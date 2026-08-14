@@ -79,11 +79,15 @@ services:
     restart: unless-stopped
     environment:
       MEM0_TELEMETRY: "False"
-      # Must match whichever model SillyTavern's connection is set to --
-      # roleplay and extraction always share one model, by design (see
-      # "One unified model..." in CLAUDE.md). Switching quants means
-      # changing this AND re-picking the model in SillyTavern together;
-      # see "Changing the model" in README.md.
+      # Roleplay and extraction always share one model, by design (see "One
+      # unified model..." in CLAUDE.md) -- enforced automatically, not by
+      # convention: the SillyTavern extension sends its own active model
+      # with every extraction request, mem0-service asks llama-cpp what
+      # models actually exist (GET /models, no hardcoded names) and builds
+      # one instance per discovered model, then picks the one matching the
+      # request. MEM0_LLM_MODEL below is just the fallback default for
+      # requests that don't specify one. See mem0-service/main.py and
+      # sillytavern/extensions/roleplay-memory/index.js.
       MEM0_LLM_PROVIDER: "openai"
       MEM0_LLM_BASE_URL: "http://llama-cpp:8080/v1"
       MEM0_LLM_MODEL: "gemma-q4"

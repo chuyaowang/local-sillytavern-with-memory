@@ -1,5 +1,8 @@
 import json
 import os
+import time
+import urllib.error
+import urllib.request
 from typing import Optional
 
 from fastapi import FastAPI
@@ -35,25 +38,26 @@ QDRANT_COLLECTION = os.environ.get("QDRANT_COLLECTION", "roleplay_memories")
 MEM0_LLM_PROVIDER = os.environ.get("MEM0_LLM_PROVIDER", "ollama")
 MEM0_LLM_BASE_URL = os.environ.get("MEM0_LLM_BASE_URL", OLLAMA_BASE_URL)
 
-if MEM0_LLM_PROVIDER == "openai":
-    llm_config = {
-        "provider": "openai",
-        "config": {
-            "model": MEM0_LLM_MODEL,
-            "openai_base_url": MEM0_LLM_BASE_URL,
-            # llama.cpp's server doesn't check this, but the openai client
-            # library requires a non-empty key to be set.
-            "api_key": "not-needed",
-        },
-    }
-else:
-    llm_config = {
+def _llm_config(model: str) -> dict:
+    if MEM0_LLM_PROVIDER == "openai":
+        return {
+            "provider": "openai",
+            "config": {
+                "model": model,
+                "openai_base_url": MEM0_LLM_BASE_URL,
+                # llama.cpp's server doesn't check this, but the openai client
+                # library requires a non-empty key to be set.
+                "api_key": "not-needed",
+            },
+        }
+    return {
         "provider": "ollama",
         "config": {
-            "model": MEM0_LLM_MODEL,
+            "model": model,
             "ollama_base_url": MEM0_LLM_BASE_URL,
         },
     }
+
 
 # Same swap for the embedder -- lets a throwaway container point it at a
 # llama.cpp server running the same nomic-embed-text-v1.5 GGUF instead of
@@ -61,12 +65,15 @@ else:
 # in the loop at all. Defaults preserve the existing Ollama-only behavior.
 MEM0_EMBEDDER_PROVIDER = os.environ.get("MEM0_EMBEDDER_PROVIDER", "ollama")
 MEM0_EMBEDDER_BASE_URL = os.environ.get("MEM0_EMBEDDER_BASE_URL", OLLAMA_BASE_URL)
+MEM0_EMBEDDER_MODEL = os.environ.get(
+    "MEM0_EMBEDDER_MODEL", "nomic-embed-text-v1.5" if MEM0_EMBEDDER_PROVIDER == "openai" else "nomic-embed-text"
+)
 
 if MEM0_EMBEDDER_PROVIDER == "openai":
     embedder_config = {
         "provider": "openai",
         "config": {
-            "model": "nomic-embed-text-v1.5",
+            "model": MEM0_EMBEDDER_MODEL,
             "openai_base_url": MEM0_EMBEDDER_BASE_URL,
             "api_key": "not-needed",
             "embedding_dims": 768,
@@ -76,26 +83,84 @@ else:
     embedder_config = {
         "provider": "ollama",
         "config": {
-            "model": "nomic-embed-text",
+            "model": MEM0_EMBEDDER_MODEL,
             "ollama_base_url": MEM0_EMBEDDER_BASE_URL,
         },
     }
 
-config = {
-    "llm": llm_config,
-    "embedder": embedder_config,
-    "vector_store": {
-        "provider": "qdrant",
-        "config": {
-            "collection_name": QDRANT_COLLECTION,
-            "host": QDRANT_HOST,
-            "port": 6333,
-            "embedding_model_dims": 768,  # nomic-embed-text output size
-        },
+VECTOR_STORE_CONFIG = {
+    "provider": "qdrant",
+    "config": {
+        "collection_name": QDRANT_COLLECTION,
+        "host": QDRANT_HOST,
+        "port": 6333,
+        "embedding_model_dims": 768,  # nomic-embed-text output size
     },
 }
 
-memory = Memory.from_config(config)
+
+def _discover_llm_models() -> list[str]:
+    # Roleplay and extraction always share one model (see CLAUDE.md), and
+    # with llama.cpp's router mode SillyTavern can pick a different one
+    # per-connection at any time. Rather than hardcoding which models exist
+    # anywhere (this deployment's models are whatever the user put in
+    # llama-cpp/models-preset.ini -- not fixed names this code should
+    # assume), ask the router itself what it has via its OpenAI-compatible
+    # GET /models. Only meaningful for the openai provider (llama.cpp);
+    # Ollama's setup here never had multiple switchable models.
+    if MEM0_LLM_PROVIDER != "openai":
+        return [MEM0_LLM_MODEL]
+
+    models_url = MEM0_LLM_BASE_URL.rstrip("/")
+    if models_url.endswith("/v1"):
+        models_url = models_url[: -len("/v1")]
+    models_url += "/models"
+
+    # Retries: mem0 can start before llama-cpp's HTTP server is actually
+    # up (depends_on only waits for container start, not readiness).
+    for _ in range(10):
+        try:
+            with urllib.request.urlopen(models_url, timeout=3) as resp:
+                data = json.loads(resp.read())
+            ids = [
+                m["id"]
+                for m in data.get("data", [])
+                if m.get("id") and m["id"] != MEM0_EMBEDDER_MODEL
+            ]
+            if ids:
+                if MEM0_LLM_MODEL not in ids:
+                    ids.append(MEM0_LLM_MODEL)
+                return ids
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+            pass
+        time.sleep(3)
+
+    # Discovery never succeeded -- fall back to just the configured
+    # default rather than refusing to start.
+    return [MEM0_LLM_MODEL]
+
+
+# One Memory instance per discovered model -- identical except for
+# llm.config.model, so a per-request model choice is a dict lookup, not a
+# mutation of shared state. Cheap: embedder/vector_store are lightweight
+# HTTP-based clients, not persistent expensive connections.
+memories_by_model: dict[str, "Memory"] = {
+    model_id: Memory.from_config({
+        "llm": _llm_config(model_id),
+        "embedder": embedder_config,
+        "vector_store": VECTOR_STORE_CONFIG,
+    })
+    for model_id in _discover_llm_models()
+}
+
+memory = memories_by_model[MEM0_LLM_MODEL]  # default/fallback instance
+
+
+def _pick_memory(model: Optional[str]) -> "Memory":
+    if model and model in memories_by_model:
+        return memories_by_model[model]
+    return memory
+
 
 app = FastAPI(title="mem0-service")
 
@@ -104,10 +169,15 @@ class AddMemoryRequest(BaseModel):
     messages: list[dict]
     user_id: str
     agent_id: Optional[str] = None
+    # SillyTavern's active model, passed through by the extension -- picks
+    # which of memories_by_model handles this call. Falls back to
+    # MEM0_LLM_MODEL if unset or unrecognized.
+    model: Optional[str] = None
 
 
 class ExtractionRawRequest(BaseModel):
     messages: list[dict]
+    model: Optional[str] = None
 
 
 class UpdateMemoryRequest(BaseModel):
@@ -151,13 +221,13 @@ If there are no general facts, return {"shared_facts": []}.
 """
 
 
-def classify_shared_facts(messages: list[dict]) -> list[str]:
+def classify_shared_facts(mem: "Memory", messages: list[dict]) -> list[str]:
     # Best-effort: this is a secondary enrichment step layered on top of the
     # primary (always-succeeds) character-scoped write below, so any failure
     # here is swallowed rather than breaking the add() call.
     transcript = "\n".join(f"{m.get('role', 'user')}: {m.get('content', '')}" for m in messages)
     try:
-        response = memory.llm.generate_response(
+        response = mem.llm.generate_response(
             messages=[
                 {"role": "system", "content": CLASSIFICATION_PROMPT},
                 {"role": "user", "content": transcript},
@@ -178,15 +248,16 @@ def health():
 
 @app.post("/memories")
 def add_memory(req: AddMemoryRequest):
-    result = memory.add(req.messages, **_scope(req.user_id, req.agent_id))
+    mem = _pick_memory(req.model)
+    result = mem.add(req.messages, **_scope(req.user_id, req.agent_id))
 
     # Only classify when this write was character-scoped -- a call already
     # targeting the shared bucket has nothing further to route.
     if req.agent_id:
-        shared_facts = classify_shared_facts(req.messages)
+        shared_facts = classify_shared_facts(mem, req.messages)
         if shared_facts:
             shared_messages = [{"role": "user", "content": fact} for fact in shared_facts]
-            memory.add(shared_messages, user_id=req.user_id, agent_id=SHARED_AGENT_ID, infer=False)
+            mem.add(shared_messages, user_id=req.user_id, agent_id=SHARED_AGENT_ID, infer=False)
 
     return result
 
@@ -199,10 +270,11 @@ def extraction_raw(req: ExtractionRawRequest):
     # silently turns it into an empty result -- identical to "the model found
     # nothing worth remembering". This endpoint reports the parse failure
     # instead of swallowing it.
+    mem = _pick_memory(req.model)
     parsed_messages = parse_messages(req.messages)
     user_prompt = generate_additive_extraction_prompt(new_messages=parsed_messages)
 
-    raw_response = memory.llm.generate_response(
+    raw_response = mem.llm.generate_response(
         messages=[
             {"role": "system", "content": ADDITIVE_EXTRACTION_PROMPT},
             {"role": "user", "content": user_prompt},

@@ -184,47 +184,65 @@ This replaces the earlier "separate `llama-cpp` + `llama-cpp-embed`
 services" idea in the integration punch list — one router-mode service with
 this preset covers the LLM (both quants) and the embedder together.
 
-**One model for both jobs, still.** CLAUDE.md documents this as a
-deliberate design decision from before llama.cpp entered the picture:
-roleplay and extraction share one model, specifically to avoid needing more
-than one chat model resident at once. An earlier version of this doc got
-that wrong — it had `mem0`'s `MEM0_LLM_MODEL` hardcoded to `gemma-q4`
-regardless of what SillyTavern was set to, on the assumption that the two
-were independent. They're not, and that assumption briefly shipped in
-`docker-compose.yml`/`docker-compose.prod.yml` before being caught and
-fixed. **Switching quants means changing both together**: `MEM0_LLM_MODEL`
-in both compose files (then rebuild+restart `mem0`/`mem0-prod`) *and*
-re-picking the model in SillyTavern's dropdown — the same two-step shape
-the original Ollama-based "Changing the model" process always had, not a
-live single-click toggle. See README.md's "Changing the model" section.
+**One model for both jobs, enforced automatically.** CLAUDE.md documents
+this as a deliberate design decision from before llama.cpp entered the
+picture: roleplay and extraction share one model, specifically to avoid
+needing more than one chat model resident at once. An earlier version of
+this setup got that wrong in two stages, both since fixed:
 
-**Q8's VRAM margin is genuinely tight, independent of that bug.** Tested
-Q8 + the embedder alone (no Q4 involved at all): it fit, but with only
-~400 MiB of headroom on the 6 GB card (5738 MiB used out of 6144 MiB). A
-separate test run of the same pairing failed outright with a CUDA error
-(`cublasCreate_v2` allocation failure) rather than just running slow. Q8
-is usable, but right at the edge — Q4 is the safer default; treat Q8 as
-something to opt into deliberately, not a routine everyday switch.
+1. First pass hardcoded `mem0`'s `MEM0_LLM_MODEL` to `gemma-q4` regardless
+   of what SillyTavern was set to, on the wrong assumption that the two
+   were independent.
+2. The fix for that was, briefly, "change both by hand and keep them in
+   sync" — better than silently diverging, but still a manual convention
+   that could drift.
+
+The actual fix: `mem0-service` now builds one `Memory` instance per model
+it discovers by asking the router itself (`GET /models` — no hardcoded
+model names anywhere, works with whatever's in `llama-cpp/models-preset.ini`),
+and the SillyTavern extension sends its own currently-active model with
+every extraction request (`context.textCompletionSettings.llamacpp_model`,
+read via `SillyTavern.getContext()` — see
+`sillytavern/extensions/roleplay-memory/index.js`). `mem0-service` picks
+the matching instance per request. No config to keep in sync by hand —
+verified by sending explicit `gemma-q4` and `gemma-q8` requests directly
+and confirming each loaded the right model on the router side.
+
+**Q8's VRAM margin was genuinely tight, and here's why.** Traced with
+trace-level (`-lv 4`) logging: embedder alone is ~330 MiB actual (weights
+216 MiB + compute 21 MiB + ~90 MiB per-process CUDA context overhead —
+router mode runs each model as a *separate process*, each paying its own
+context overhead). Q8 alone is ~5.3 GB. Combined, that leaves only
+~500 MiB nominally free on the 6 GB card — and that thin margin didn't fail
+predictably: three separate attempts produced three different outcomes
+(a `cudaMalloc` OOM, a `cublasCreate_v2` allocation failure, and once just
+silently falling back to ~1-2 tok/s instead of crashing).
+
+Root cause: llama-server's `--fit` (on by default, targets a 1024 MiB
+margin) only adjusts arguments left *unset* — the preset had `gemma-q8`'s
+`n-gpu-layers` pinned to 99, which disables `--fit` outright (the exact
+`"failed to fit params... n_gpu_layers already set by user to 99, abort"`
+log line seen earlier in this doc). Removing that pin and letting `--fit`
+choose fixed it: stable across 5 repeated loads with the embedder already
+resident, at ~18.6 tok/s instead of ~50 tok/s (some layers now run on CPU
+to keep the margin). Real tradeoff, not a free fix — `llama-cpp/models-preset.ini`
+has the full explanation inline.
 
 ### Switching Q4 <-> Q8 from SillyTavern
 
-SillyTavern's side of this works, confirmed in real use against the dev
-stack: the Text Completion "llama.cpp" API connection, actual chat
-conversations, and switching between `gemma-q4` and `gemma-q8` from the
-connection's model dropdown all tested working directly in the UI. This
-wasn't built for this project — it's existing, native SillyTavern
-functionality, traced through its own source
-(`public/scripts/textgen-models.js`, `public/scripts/textgen-settings.js`
-inside the `sillytavern` container): `loadLlamaCppModels()` populates the
-`#llamacpp_model` dropdown from the connected server's model list
-(`GET /models`), and the selected value is sent as `model` in every
-generation request (`textgen-settings.js`'s `getModel()`, `LLAMACPP` case).
-
-But per the correction above, that dropdown only changes what SillyTavern
-itself talks to — it does **not** change what `mem0` uses for extraction.
-Picking a different model there without also updating `MEM0_LLM_MODEL`
-recreates the exact one-model-vs-two-model VRAM contention this whole
-single-model design was meant to avoid.
+Works, confirmed in real use against the dev stack: the Text Completion
+"llama.cpp" API connection, actual chat conversations, and switching
+between `gemma-q4` and `gemma-q8` from the connection's model dropdown all
+tested working directly in the UI — and now, per the fix above, so does
+the extraction side automatically following along. SillyTavern's dropdown
+itself wasn't built for this project — it's existing, native functionality,
+traced through its own source (`public/scripts/textgen-models.js`,
+`public/scripts/textgen-settings.js` inside the `sillytavern` container):
+`loadLlamaCppModels()` populates the `#llamacpp_model` dropdown from the
+connected server's model list (`GET /models`), and the selected value is
+sent as `model` in every generation request (`textgen-settings.js`'s
+`getModel()`, `LLAMACPP` case) — the same context field the extension now
+reads to keep `mem0` in sync.
 
 ## Raw data
 

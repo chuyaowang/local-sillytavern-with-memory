@@ -12,6 +12,24 @@ function getIds() {
     };
 }
 
+// Roleplay and memory extraction are supposed to always share one model
+// (see CLAUDE.md). Sending this with every flush is what makes that
+// automatic instead of a manually-maintained convention -- mem0-service
+// picks the matching model itself (see mem0-service/main.py's
+// memories_by_model) rather than trusting a fixed config value that could
+// drift from whatever's actually selected here.
+// context.textCompletionSettings / .mainApi verified directly against
+// SillyTavern's own source (public/scripts/st-context.js's getContext()),
+// same as the extension_prompt_types constants below -- not part of the
+// documented extension API.
+function getActiveModel() {
+    const context = SillyTavern.getContext();
+    if (context.mainApi === 'textgenerationwebui' && context.textCompletionSettings?.type === 'llamacpp') {
+        return context.textCompletionSettings.llamacpp_model || null;
+    }
+    return null;
+}
+
 function getLastUserMessage(chat) {
     for (let i = chat.length - 1; i >= 0; i--) {
         if (chat[i].is_user) return chat[i].mes;
@@ -125,6 +143,7 @@ async function flushBuffer() {
     bufferCharCount = 0;
 
     const { userId, agentId } = getIds();
+    const model = getActiveModel();
 
     try {
         // POST requests need an X-CSRF-Token header or ST's CSRF middleware
@@ -133,7 +152,7 @@ async function flushBuffer() {
         await fetch('/api/plugins/roleplay-memory/add', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token },
-            body: JSON.stringify({ messages, user_id: userId, agent_id: agentId || undefined }),
+            body: JSON.stringify({ messages, user_id: userId, agent_id: agentId || undefined, model: model || undefined }),
         });
     } catch (err) {
         console.error('[roleplay-memory] flush failed:', err);
