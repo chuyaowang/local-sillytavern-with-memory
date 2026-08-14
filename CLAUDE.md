@@ -138,6 +138,78 @@ The original open question ("shared vs. per-character memory") is resolved:
   shared; verified by checking a fact's visibility from a character that
   never took part in the original conversation.
 
+### World lore (mem0, replacing SillyTavern's native World Info)
+
+ST's built-in World Info matches lore into the prompt by literal keyword
+scan against recent messages (confirmed by reading `world-info.js`
+directly) — brittle, since a paraphrase that shares no exact keyword with
+an entry gets nothing injected. Lore is now a third mem0 scope with
+embedding-similarity retrieval instead, on a third, orthogonal axis from
+the shared/character split above:
+
+- **`user_id="world"`** is a fixed sentinel (mirroring `agent_id="shared"`
+  above, but on the *other* axis) — world lore isn't "about" any real
+  user. A world is just an `agent_id` value under that sentinel
+  (`"eldoria"`, `"kivotos"`, ...); no per-world schema, no new
+  list/multi-world endpoints needed — `GET /scopes?user_id=world` already
+  returns which worlds have lore, and the existing admin UI (`/ui`)
+  already browses/edits/deletes them by picking `user_id=world` from its
+  dropdown.
+- **Character→world binding reuses ST's own `character.data.extensions.world`
+  field** (the character panel's globe-icon "Primary Lorebook" picker)
+  instead of a separate mapping — confirmed empirically that ST never
+  rewrites the bound world file on its own (wiped `sillytavern/data`
+  entirely, a brand-new container with zero chat messages already had
+  `Eldoria.json` + `Seraphina` present — bundled default content baked
+  into the SillyTavern image's `/home/node/app/default/content/`, seeded
+  on first run, not written by ST or mem0 over time), so it's safe to
+  leave the binding field in place while emptying that world file's
+  `entries` to `{}` — ST's keyword scanner then has nothing to match,
+  killing double-injection, while the roleplay-memory extension keeps
+  reading the same field as pure metadata (`getBoundWorld()`, sent as
+  `world` on both `/context` and `/add`).
+- **Two ways lore gets written, both automatic — never manually posted
+  during normal use:**
+  1. **Passive**, during ordinary roleplay: the existing shared/character
+     classifier (`classify_facts` in `mem0-service/main.py`) is 3-way —
+     shared / character-private / world — for whichever world the active
+     character is bound to. The prompt is told *which* world is relevant
+     (from the request's `world` field) rather than guessing/naming it, so
+     it only judges yes/no per candidate fact.
+  2. **Active**, via a **World Creator** agent: a plain SillyTavern
+     character (not a special API flag — ST's character panel has no UI
+     for arbitrary custom `extensions` fields) that must be named exactly
+     `World Weaver`, detected client-side by name. Talked to like any
+     character; its exchanges route to `POST /worlds/interview` instead of
+     the normal `/add` path — a dedicated extraction prompt
+     (`WORLD_INTERVIEW_PROMPT`) identifies both the world's name *and* its
+     facts from the interview transcript, since (unlike a roleplay
+     character) it isn't bound to one fixed world going in. World-scope
+     only — deliberately does **not** also run shared-fact classification
+     against the interview transcript (considered and rejected: an
+     interview isn't a conversation with a character, so there's no
+     relationship dimension, and mixing concerns wasn't worth the added
+     complexity). Because it writes into the same store the passive path
+     reads from, a lorebook built this way is available immediately in a
+     fresh roleplay session bound to that world — no import/export step.
+- `GET /memories/context` gained an optional `world` param — a third
+  `memory.search()` alongside the existing `shared`/`character` ones,
+  returned as a `world` key; the extension injects it as a distinct
+  `World lore: ...` line, separate from `Relevant memories: ...`, so the
+  model can tell setting lore apart from relationship history.
+- `POST /worlds/{world}/memories` is a low-level write primitive (content
+  in, mem0's normal extraction pipeline runs on it, `infer` left at its
+  default `True`) — used only by the one-time backfill script
+  (`scripts/migrate-lorebook-to-mem0.sh <world-json-file> <world-name>
+  [mem0-url]`), which reads an existing ST World Info file's
+  `entries[*].content` and posts each through it before that file's
+  entries get emptied, so pre-existing lore isn't lost. Deliberately runs
+  extraction rather than storing the raw blob verbatim — ST World Info
+  entries are often whole example-dialogue blocks (`{{user}}: "..."
+  {{char}}: "..."`), not atomic facts, and verbatim storage would embed a
+  huge, semantically-diluted blob instead of the same atomic-fact shape
+  every other write path produces.
+
 ### Frontend (SillyTavern)
 
 - Containerized (`ghcr.io/sillytavern/sillytavern`), config/data/plugins/
