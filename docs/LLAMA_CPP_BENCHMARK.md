@@ -176,33 +176,55 @@ config). One `[section]` per model, keys match CLI flag names without the
 leading dashes.
 
 Run with `--models-preset ... --models-max 2` — not 3: Q4 (~3.3 GB)
-and Q8 (~5+ GB) can't both fit alongside the embedder on a 6 GB card, so
-`--models-max 2` keeps the embedder resident (touched on every mem0 call)
-plus whichever chat model was used most recently, and LRU-evicts the other
-chat model automatically when you switch. That's the intended behavior,
-not a limitation — switching models *is* supposed to evict the old one.
+and Q8 (~5.3-5.7 GB) can't both fit alongside the embedder on a 6 GB card,
+so `--models-max 2` keeps room for the embedder (needed on every mem0 call)
+plus one chat model.
 
 This replaces the earlier "separate `llama-cpp` + `llama-cpp-embed`
 services" idea in the integration punch list — one router-mode service with
 this preset covers the LLM (both quants) and the embedder together.
 
+**One model for both jobs, still.** CLAUDE.md documents this as a
+deliberate design decision from before llama.cpp entered the picture:
+roleplay and extraction share one model, specifically to avoid needing more
+than one chat model resident at once. An earlier version of this doc got
+that wrong — it had `mem0`'s `MEM0_LLM_MODEL` hardcoded to `gemma-q4`
+regardless of what SillyTavern was set to, on the assumption that the two
+were independent. They're not, and that assumption briefly shipped in
+`docker-compose.yml`/`docker-compose.prod.yml` before being caught and
+fixed. **Switching quants means changing both together**: `MEM0_LLM_MODEL`
+in both compose files (then rebuild+restart `mem0`/`mem0-prod`) *and*
+re-picking the model in SillyTavern's dropdown — the same two-step shape
+the original Ollama-based "Changing the model" process always had, not a
+live single-click toggle. See README.md's "Changing the model" section.
+
+**Q8's VRAM margin is genuinely tight, independent of that bug.** Tested
+Q8 + the embedder alone (no Q4 involved at all): it fit, but with only
+~400 MiB of headroom on the 6 GB card (5738 MiB used out of 6144 MiB). A
+separate test run of the same pairing failed outright with a CUDA error
+(`cublasCreate_v2` allocation failure) rather than just running slow. Q8
+is usable, but right at the edge — Q4 is the safer default; treat Q8 as
+something to opt into deliberately, not a routine everyday switch.
+
 ### Switching Q4 <-> Q8 from SillyTavern
 
-Works, confirmed in real use against the dev stack: the Text Completion
-"llama.cpp" API connection, actual chat conversations, and switching
-between `gemma-q4` and `gemma-q8` from the connection's model dropdown all
-tested working directly in the SillyTavern UI.
-
-This wasn't built for this project — it's existing, native SillyTavern
+SillyTavern's side of this works, confirmed in real use against the dev
+stack: the Text Completion "llama.cpp" API connection, actual chat
+conversations, and switching between `gemma-q4` and `gemma-q8` from the
+connection's model dropdown all tested working directly in the UI. This
+wasn't built for this project — it's existing, native SillyTavern
 functionality, traced through its own source
 (`public/scripts/textgen-models.js`, `public/scripts/textgen-settings.js`
-inside the `sillytavern` container) before the live test: `loadLlamaCppModels()`
-populates the `#llamacpp_model` dropdown from the connected server's model
-list (`GET /models` — the exact endpoint router mode exposes), and the
-selected value is sent as `model` in every generation request
-(`textgen-settings.js`'s `getModel()`, `LLAMACPP` case) — which is exactly
-what makes router mode's on-demand load/evict kick in per the switch times
-under "Model switching" above.
+inside the `sillytavern` container): `loadLlamaCppModels()` populates the
+`#llamacpp_model` dropdown from the connected server's model list
+(`GET /models`), and the selected value is sent as `model` in every
+generation request (`textgen-settings.js`'s `getModel()`, `LLAMACPP` case).
+
+But per the correction above, that dropdown only changes what SillyTavern
+itself talks to — it does **not** change what `mem0` uses for extraction.
+Picking a different model there without also updating `MEM0_LLM_MODEL`
+recreates the exact one-model-vs-two-model VRAM contention this whole
+single-model design was meant to avoid.
 
 ## Raw data
 

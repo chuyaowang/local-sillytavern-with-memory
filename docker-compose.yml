@@ -79,9 +79,11 @@ services:
     restart: unless-stopped
     environment:
       MEM0_TELEMETRY: "False"
-      # Extraction always uses Q4 regardless of which quant SillyTavern's
-      # roleplay connection happens to have selected in llama-cpp -- the two
-      # are independent choices. See docs/LLAMA_CPP_BENCHMARK.md.
+      # Must match whichever model SillyTavern's connection is set to --
+      # roleplay and extraction always share one model, by design (see
+      # "One unified model..." in CLAUDE.md). Switching quants means
+      # changing this AND re-picking the model in SillyTavern together;
+      # see "Changing the model" in README.md.
       MEM0_LLM_PROVIDER: "openai"
       MEM0_LLM_BASE_URL: "http://llama-cpp:8080/v1"
       MEM0_LLM_MODEL: "gemma-q4"
