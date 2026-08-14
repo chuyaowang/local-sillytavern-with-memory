@@ -324,11 +324,14 @@ def add_memory(req: AddMemoryRequest):
 
 @app.post("/worlds/{world}/memories")
 def add_world_lore(world: str, req: AddWorldLoreRequest):
-    # Low-level manual write -- used by the one-time lorebook backfill
-    # script, not by either automatic extraction path below. infer=False:
-    # this is already-curated text to embed directly, not something to run
-    # fact-extraction on.
-    return memory.add([{"role": "user", "content": req.content}], user_id=WORLD_USER_ID, agent_id=world, infer=False)
+    # Low-level write -- used by the one-time lorebook backfill script.
+    # infer defaults to True (mem0's normal extraction pipeline, same as
+    # the primary character-scoped add in add_memory()): ST World Info
+    # entries are often whole example-dialogue blocks, not atomic facts, so
+    # this runs them through fact extraction rather than embedding the raw
+    # blob verbatim -- keeps world memories the same shape (atomic facts)
+    # regardless of which of the three write paths produced them.
+    return memory.add([{"role": "user", "content": req.content}], user_id=WORLD_USER_ID, agent_id=world)
 
 
 @app.post("/worlds/interview")

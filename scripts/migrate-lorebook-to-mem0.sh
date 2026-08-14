@@ -63,7 +63,11 @@ while IFS= read -r encoded; do
   content=$(jq -r '.' <<< "$encoded")
   [[ -z "$content" ]] && continue
   payload=$(jq -n --arg content "$content" '{content: $content}')
-  if curl -sf -m 30 -X POST "${MEM0_URL}/worlds/${WORLD_NAME}/memories" \
+  # Long timeout: the endpoint runs mem0's normal LLM-based fact extraction
+  # on each entry (not a verbatim store), which on this project's local GPU
+  # can take well over a minute per entry -- see CLAUDE.md's llama.cpp
+  # notes on generation speed.
+  if curl -sf -m 300 -X POST "${MEM0_URL}/worlds/${WORLD_NAME}/memories" \
       -H "Content-Type: application/json" -d "$payload" >/dev/null; then
     count=$((count + 1))
   else
