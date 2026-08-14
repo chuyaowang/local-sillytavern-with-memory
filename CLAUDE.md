@@ -9,9 +9,15 @@ No data leaves the local network.
 ## Architecture (current, implemented)
 
 Everything runs on a single GPU-equipped machine ("the host") via Docker Compose
-(`docker-compose.yml` at repo root: `ollama`, `qdrant`, `mem0`, `sillytavern`, all
+(`docker-compose.yml` at repo root: `llama-cpp`, `qdrant`, `mem0`, `sillytavern`, all
 on a shared `roleplay-net` bridge network). A second computer on the same
 Tailscale network accesses SillyTavern via browser only.
+
+`ollama` is also still defined in `docker-compose.yml` but unused — kept as a
+zero-risk fallback after the switch to llama.cpp (see below), not removed.
+It won't start via any `make` target; its old imported model blobs
+(~13.8 GB) have been cleared from its volume to reclaim disk space, though
+the volume/service definition itself is untouched.
 
 Docker itself runs on **native Docker Engine** (`docker-ce`, installed via apt),
 not Docker Desktop — Docker Desktop for Linux runs everything inside an internal
@@ -20,33 +26,62 @@ uses the NVIDIA Container Toolkit (`nvidia-ctk runtime configure --runtime=docke
 Docker Desktop is still installed and selectable via `docker context`, but native
 (`default` context) is what's actually used.
 
-### Inference (Ollama)
+### Inference (llama.cpp)
 
-- Containerized (`ollama/ollama` image), GPU passthrough via native Docker
-  Engine and nvidia-container-toolkit. Bound to `127.0.0.1:11434` — never
-  exposed beyond localhost.
-- Model storage is a named Docker volume (`ollama_models`), not a bind mount to
-  the native install — the native systemd Ollama install was fully removed once
-  the container was verified working (binary, systemd unit, `/usr/share/ollama`
-  data dir, and the `ollama` system user/group all deleted).
-- On the host, `ollama` is aliased to `docker exec -it ollama ollama "$@"` (added
-  to `~/.bashrc`) so the CLI works transparently against the container.
-- **One unified model serves both roleplay generation and memory extraction**:
-  `gemma4-e4b-hauhaucs`, imported from a local GGUF
-  (`models/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf`) via
-  `models/Modelfile`. `num_ctx` is set to 16384 — mem0's extraction system
-  prompt alone is ~8,000 tokens, and smaller context windows silently truncate
-  it, causing schema failures (see "Lessons learned" below).
-- `nomic-embed-text` is pulled directly from Ollama's library for embeddings.
-- Originally planned to use a separate, smaller model for extraction (to save
-  VRAM) alongside a roleplay-tuned model. Abandoned: the roleplay-tuned
-  "obliterated"/abliterated checkpoints tested were unreliable at mem0's
-  structured JSON extraction regardless of quantization (Q5 and Q4 both
-  failed), and Ollama's admission-control estimator made 3-model VRAM
-  coexistence impractical on a 6GB card. `gemma4-e4b-hauhaucs` passed
+- Containerized (`ghcr.io/ggml-org/llama.cpp:server-cuda13`), GPU passthrough
+  via native Docker Engine and nvidia-container-toolkit. Bound to
+  `127.0.0.1:8080` — never exposed beyond localhost.
+- Runs in **router mode** (`--models-preset llama-cpp/models-preset.ini
+  --models-max 2`), not the vanilla single-`--model` mode — one process
+  serves multiple GGUFs on demand, loading/evicting per request based on the
+  `model` field, the same way Ollama could hold multiple tags. Confirmed
+  each model actually runs as a *separate child process* (own PID, own CUDA
+  context) under the hood, not a shared context — relevant to the VRAM notes
+  below. `--models-preset` is an INI file, one `[section]` per model, keys
+  matching CLI flags with the leading dashes dropped; there's also a
+  `--models-dir` auto-discovery mode but the preset gives per-model control
+  (sampling defaults, KV cache quant) that auto-discovery doesn't.
+- Replaced Ollama for a measured ~12% generation-speed gain at comparable
+  VRAM (once KV cache quantization was matched on both sides) — full
+  benchmark methodology and numbers in `docs/LLAMA_CPP_BENCHMARK.md`.
+- **One unified model still serves both roleplay generation and memory
+  extraction**, now enforced automatically rather than by convention:
+  `mem0-service` asks the router what models actually exist
+  (`GET /models` — no hardcoded model names anywhere) and builds one
+  `Memory` instance per discovered model at startup; the SillyTavern
+  extension reads its own currently-active model
+  (`context.textCompletionSettings.llamacpp_model`) and sends it with every
+  extraction request, so `mem0-service` always uses whatever SillyTavern is
+  actually using. This replaced an earlier, broken version of this exact
+  system where `mem0`'s model was a separate hardcoded config value that
+  could silently drift from SillyTavern's — caught by testing, not
+  inspection (see "Lessons learned").
+- Two quants configured in the preset: `gemma-q4` (safe default, ~3.3 GB) and
+  `gemma-q8` (~5.3 GB, tight — see below). `ctx-size` stays at 16384 for the
+  same reason as always: mem0's extraction system prompt alone is ~8,000
+  tokens, and smaller context windows silently truncate it, causing schema
+  failures (see "Lessons learned" below).
+- Model files live in `models/` and are read directly — no equivalent of
+  `ollama create`/import step. Switching to a different GGUF is just editing
+  `llama-cpp/models-preset.ini` and restarting the container.
+- **Embedding model**: `nomic-embed-text-v1.5.f16.gguf`, downloaded by hand
+  from `nomic-ai/nomic-embed-text-v1.5-GGUF` on Hugging Face into `models/`
+  (confirmed byte-for-byte equivalent to Ollama's copy by matching file
+  size against Ollama's own blob) — llama.cpp has no model registry to pull
+  from the way Ollama did. Served from the same router process as the chat
+  models, via a `[nomic-embed-text-v1.5]` preset section with `embeddings = 1`;
+  its section name must stay in sync with the hardcoded model string in
+  `mem0-service/main.py`'s embedder config.
+- Originally, for the Ollama-era setup: a separate, smaller model for
+  extraction (to save VRAM) alongside a roleplay-tuned model was planned and
+  abandoned. The roleplay-tuned "obliterated"/abliterated checkpoints tested
+  were unreliable at mem0's structured JSON extraction regardless of
+  quantization (Q5 and Q4 both failed), and Ollama's admission-control
+  estimator made 3-model VRAM coexistence impractical on a 6GB card.
+  `gemma4-e4b-hauhaucs` (now served as `gemma-q4`/`gemma-q8`) passed
   extraction-reliability testing cleanly *and* works for roleplay, so one
-  model now does both jobs — this also sidesteps the VRAM/eviction problem
-  entirely, since only one model + the embedder need to stay resident.
+  model still does both jobs — this is also why only one chat model plus
+  the embedder need to stay resident at once (`--models-max 2`).
 
 ### Memory (mem0 + Qdrant)
 
@@ -57,8 +92,13 @@ Docker Desktop is still installed and selectable via `docker context`, but nativ
 - Vector store: **Qdrant** (self-hosted container), chosen over Chroma as
   mem0's best-supported/most-tested backend and better suited to a
   long-running multi-consumer service than Chroma's embedded-first design.
-- `llm` and `embedder` config both point at the local Ollama container
-  explicitly — mem0 defaults both to OpenAI otherwise.
+- `llm` and `embedder` config both point at the local llama.cpp container's
+  OpenAI-compatible API (`MEM0_LLM_PROVIDER=openai`/`MEM0_EMBEDDER_PROVIDER=openai`,
+  `*_BASE_URL=http://llama-cpp:8080/v1`) — mem0 defaults both to real OpenAI
+  otherwise. `mem0-service/main.py` builds one `Memory` instance per model
+  discovered from the router (see "Inference" above) rather than a single
+  fixed instance; `MEM0_LLM_MODEL`/`MEM0_EMBEDDER_MODEL` are just the
+  fallback defaults for a request that doesn't specify a model.
 - `MEM0_TELEMETRY=False` set explicitly — mem0 defaults to phoning home to
   PostHog otherwise, which would violate the local-only requirement.
 - **No graph database (Neo4j, FalkorDB, or otherwise) is used.** `graph_store`
@@ -114,10 +154,15 @@ The original open question ("shared vs. per-character memory") is resolved:
   request to the host's own Tailscale IP appears as that real IP — the
   gateway IP (`172.18.0.1` for this network) is whitelisted too, purely for
   host-side testing convenience.
-- Connected to Ollama via **API type: Text Completion, source: Ollama, Server
-  URL: `http://ollama:11434`** (the Docker-internal hostname — `localhost`
-  from inside the ST container would mean the ST container itself, not
-  Ollama).
+- Connected to llama.cpp via **API type: Text Completion, source: llama.cpp,
+  Server URL: `http://llama-cpp:8080`** (the Docker-internal hostname —
+  `localhost` from inside the ST container would mean the ST container
+  itself, not llama.cpp). ST's llama.cpp connector already has native model
+  dropdown support (`textgen-models.js`'s `loadLlamaCppModels()`, fetches
+  the router's `GET /models`) — switching quants is just picking a different
+  entry from that dropdown, no plugin/extension changes needed to support
+  it. Confirmed by reading ST's own source before relying on it
+  (`public/scripts/textgen-models.js`, `textgen-settings.js`), not assumed.
 
 ### ST ↔ mem0 integration — two pieces, not one
 
@@ -166,20 +211,30 @@ break the "internal services stay local" posture.
      `user_id` from the persona name (`context.name1`), `agent_id` from the
      active character's name (`context.characters[context.characterId].name`)
      — both slugified.
+   - Also sends `model`, read from
+     `context.textCompletionSettings.llamacpp_model` (only when
+     `mainApi === 'textgenerationwebui'` and `textCompletionSettings.type
+     === 'llamacpp'`) — this is what keeps mem0's extraction model in sync
+     with whatever SillyTavern is actually generating with. Both fields
+     aren't part of the documented extension API; verified directly against
+     `st-context.js`'s `getContext()` before relying on them.
 
 ### Dev vs. prod environments
 
-- `docker-compose.yml` (`ollama`, `qdrant`, `mem0`, `sillytavern`) is the
+- `docker-compose.yml` (`llama-cpp`, `qdrant`, `mem0`, `sillytavern`) is the
   development stack — where extension/plugin/mem0-service changes get tested.
   `docker-compose.prod.yml` is an overlay for the real-use instance, not a
-  standalone file — it relies on `roleplay-net` and the `ollama` service
+  standalone file — it relies on `roleplay-net` and the `llama-cpp` service
   declared in the base file, so it's always run together:
   `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
   qdrant-prod mem0-prod sillytavern-prod`. The `Makefile` wraps this (and the
-  matching stop commands, careful to never stop the shared `ollama` service
+  matching stop commands, careful to never stop the shared `llama-cpp` service
   when only one stack should go down) as `make dev-up`/`dev-down`/`prod-up`/
   `prod-down`/`down`/`status` — that's the version actually worth remembering.
-- **Shared**: Ollama (GPU/VRAM is the scarce resource on a 6GB card — no
+  `dev-up`/`prod-up` list services explicitly rather than a blanket
+  `docker compose up -d`, specifically so `ollama` never gets started as a
+  side effect now that `llama-cpp` has no Compose profile restricting it.
+- **Shared**: llama.cpp (GPU/VRAM is the scarce resource on a 6GB card — no
   reason to load the model twice) and the SillyTavern plugin/extension code
   (`sillytavern/plugins`, `sillytavern/extensions`, bind-mounted into both ST
   containers from the same host path). It's git-tracked source, not runtime
@@ -192,7 +247,11 @@ break the "internal services stay local" posture.
   gitignored the same way as the dev copies, own basic-auth credentials and
   whitelist). `mem0-service/main.py` reads `QDRANT_HOST` from the environment
   (default `qdrant`) specifically so the same built image serves either
-  stack without a code fork.
+  stack without a code fork. `mem0`/`mem0-prod` are separately *tagged*
+  images from the same build context, though — changing `mem0-service`
+  code and only rebuilding `mem0` leaves `mem0-prod` running the old image
+  until it's rebuilt too (`docker compose up -d --build mem0-prod`);
+  confirmed the hard way when a fixed crash still reproduced in prod.
 - **Rejected**: a single shared mem0-service instance manually repointed at
   whichever Qdrant is "active" via env var + restart. mem0-service is
   stateless per request and has no way to know which Qdrant is prod vs. dev
@@ -234,6 +293,49 @@ break the "internal services stay local" posture.
   hallucinate this kind of flourish. Verify via server-side logs/data
   directly (mem0's own request log, direct Qdrant queries) before trusting a
   model's self-report.
+- **llama.cpp's `--fit` (on by default, keeps a VRAM safety margin) only
+  adjusts CLI arguments left unset.** Pinning `n-gpu-layers` explicitly (as
+  the Q8 preset originally did, copied from the Q4 one) silently disables
+  the whole safety mechanism — logged as `"failed to fit params... abort"`
+  and easy to miss. Result: Q8 loaded right up to the VRAM edge and failed
+  unpredictably (a `cudaMalloc` OOM one run, a `cublasCreate_v2` failure
+  another, a silent 30x slowdown a third) whenever the embedder also needed
+  room. Leaving `n-gpu-layers` unset for a tight-VRAM quant lets `--fit`
+  offload a few layers to CPU instead — stable across repeated tests, at a
+  real cost (~18.6 tok/s vs. ~50 tok/s for Q8). Not a free fix; a real
+  tradeoff worth knowing about before assuming "it loaded, so it's fine."
+- **mem0's `OpenAILLM.generate_response()` has no per-call model
+  override** — it always uses `self.config.model`, fixed at construction,
+  regardless of any `model` kwarg passed in. Point-in-time discovery, not
+  assumption (checked the installed package's source directly). This is why
+  per-request model routing needed one `Memory` instance per model
+  (`mem0-service/main.py`'s `memories_by_model`) rather than a single
+  instance with a swapped-in model name.
+- **llama.cpp's router mode runs each model as a genuinely separate OS
+  process**, each with its own CUDA context — confirmed via distinct PIDs
+  in the container logs. This means per-process CUDA context overhead
+  (tens to ~100 MiB, measured directly with `-lv 4` trace logging) is paid
+  once per *loaded model*, not once per container, and "free" VRAM reported
+  by `nvidia-smi` isn't necessarily usable as one contiguous allocation by
+  whichever process needs it next — a likely factor in the Q8 instability
+  above, beyond the raw byte-count margin.
+- **This specific fine-tune (HauhauCS Gemma 4 E4B) emits a separate
+  reasoning/"thinking" block** (`message.reasoning_content` via llama.cpp's
+  OpenAI-compatible API) before its actual reply, and at low temperature or
+  a tight token budget it can burn the *entire* budget on reasoning and
+  return empty `content` — not a bug, a real model behavior. Give it
+  generous `max_tokens` and don't assume `content` is non-empty just
+  because the request succeeded.
+- **Disk read speed can be the dominant factor in "cold start" benchmark
+  numbers, easy to mistake for something else.** On this host, the drive
+  holding the whole project turned out to be an external SSD plugged into
+  a USB 2.0 port (capped ~35-40 MB/s regardless of the SSD's real speed) —
+  found by actually measuring (`dd` timing, `lsusb -t` showing `480M` vs.
+  the host's other `10000M`-capable controllers) rather than assuming slow
+  model loads were inherent to the model/backend. Moving it to USB 3.x cut
+  multi-minute cold loads down to single-digit seconds. If a load/switch
+  benchmark looks unexpectedly slow, check the storage path before blaming
+  the inference backend.
 
 ## Why mem0 over Letta
 
@@ -249,6 +351,19 @@ model.
 - [ ] Memory-editing tool — a way to browse/correct/delete stored memories
       outside of steering a live conversation. Motivated `mem0-service` being
       a standalone service rather than embedded in the extension/plugin.
+- [ ] `sillytavern-prod`'s Text Completion connection has `type: llamacpp`
+      set, but `llamacpp_model` is empty (checked directly in its
+      `settings.json`) — nobody's actually picked a model from the dropdown
+      there yet, unlike the dev instance. Extraction still works either way
+      (falls back to `mem0`'s configured default), but roleplay generation
+      itself won't work in prod until this is done through its UI.
+- [ ] Decide whether to delete the now-unused Ollama-era files
+      (`models/Modelfile`, `models/Modelfile.q8`, `scripts/test-model.sh`)
+      or keep them as a reference in case of ever falling back to Ollama.
+      Nothing references them anymore.
+- [ ] Decide `ollama`'s longer-term fate — currently kept fully defined but
+      unused as a zero-risk fallback (see "Architecture" above), not a
+      permanent decision.
 - [ ] Nothing else from the original plan is currently open — vector store,
       memory scoping, and the ST↔mem0 integration are all decided and
       implemented (see above).
