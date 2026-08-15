@@ -132,11 +132,16 @@ The original open question ("shared vs. per-character memory") is resolved:
 - **LLM-based classification**: every character-scoped `POST /memories` also
   runs a second, lightweight classification pass (same model, a separate
   prompt asking "which of these facts are general vs. relationship-specific")
-  and mirrors general facts into the shared layer via a second `mem0.add()`
+  and **moves** general facts into the shared layer via a second `mem0.add()`
   call with `infer=False` (storing the already-classified text directly,
-  skipping re-extraction). Character-specific content never leaks into
-  shared; verified by checking a fact's visibility from a character that
-  never took part in the original conversation.
+  skipping re-extraction) followed by deleting the character-scoped
+  original. A memory only ever lives in one scope at a time — an earlier
+  version mirrored instead of moving (kept both copies), which meant a
+  query pulling both scopes for a relevant question could inject the same
+  fact twice; deleting the original after a successful move fixed this.
+  Character-specific content never leaks into shared; verified by checking
+  a fact's visibility from a character that never took part in the
+  original conversation.
 
 ### World lore (mem0, replacing SillyTavern's native World Info)
 
@@ -188,7 +193,19 @@ the shared/character split above:
      already produced: the prompt states all three scopes plainly
      (character/shared/world), and classifies each item by number rather
      than retyping its text — selected facts are looked up verbatim by
-     index afterward, not trusted to be reproduced unchanged.
+     index afterward, not trusted to be reproduced unchanged. A fact
+     classified as shared or world is **moved**, not mirrored: written to
+     its new scope, then deleted from character scope via `mem.delete()`
+     (only after the write succeeds). A memory only ever lives in one
+     scope — an earlier version kept both copies, which let a query
+     pulling both scopes for a relevant question inject the same fact
+     twice. Since the moving write uses `infer=False` (skips mem0's own
+     entity-store linking, which only runs inside its `infer=True`
+     pipeline), `_link_entities()` replicates that step by calling mem0's
+     own private entity-store helpers directly — a plain spaCy NER pass
+     (`extract_entities_batch`, no LLM call) followed by the same
+     match-or-insert logic mem0's own pipeline uses, so a moved fact keeps
+     its entity-search-boosting instead of silently losing it.
   2. **Active**, via a **World Creator** agent: a plain SillyTavern
      character (not a special API flag — ST's character panel has no UI
      for arbitrary custom `extensions` fields) that must be named exactly
@@ -236,7 +253,7 @@ the shared/character split above:
   (confirmed supported — `Memory.search()`'s `filters` dict accepts
   arbitrary metadata keys with real operators, not just user_id/agent_id/
   run_id, per its own docstring and `_build_filters_and_metadata()`'s
-  handling of custom metadata). Every shared-fact mirror write is tagged
+  handling of custom metadata). Every shared-fact move write is tagged
   `metadata={"world": resolved_world or NO_WORLD}` (`NO_WORLD = "none"`,
   a real sentinel rather than an unset field — same reasoning as
   `SHARED_AGENT_ID`/`WORLD_USER_ID`: mem0's filter DSL has no "field is
