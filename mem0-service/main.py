@@ -236,6 +236,11 @@ class UpdateMemoryRequest(BaseModel):
     text: str
 
 
+class MoveMemoryRequest(BaseModel):
+    user_id: str
+    agent_id: Optional[str] = None
+
+
 class BulkReplaceRequest(BaseModel):
     user_id: str
     agent_id: Optional[str] = None
@@ -594,6 +599,25 @@ def update_memory(memory_id: str, req: UpdateMemoryRequest):
 def delete_memory(memory_id: str):
     memory.delete(memory_id)
     return {"status": "deleted"}
+
+
+@app.put("/memories/{memory_id}/move")
+def move_memory(memory_id: str, req: MoveMemoryRequest):
+    # Reassigns which user/character/world a memory is filed under. mem0's
+    # own update() refuses to touch user_id/agent_id (confirmed by reading
+    # its docstring directly -- "ignored here, they are immutable after
+    # creation"), but that is a rule the Python API enforces, not something
+    # Qdrant itself requires: the embedding vector is a function of the
+    # memory's text alone, never the labels, so there is nothing to
+    # recompute. A direct payload update leaves the vector, hash, and
+    # metadata untouched and only changes the two label fields.
+    scope = _scope(req.user_id, req.agent_id)
+    memory.vector_store.client.set_payload(
+        collection_name=memory.collection_name,
+        payload=scope,
+        points=[memory_id],
+    )
+    return {"status": "moved", **scope}
 
 
 @app.post("/memories/bulk-replace")

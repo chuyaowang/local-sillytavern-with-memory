@@ -29,6 +29,10 @@
   .card .actions button.danger { color: #b91c1c; border-color: #fca5a5; }
   .card .actions button.save { background: #2563eb; color: white; border: none; display: none; }
   .card .actions button.save:hover { background: #1d4ed8; }
+  .card .move-row { display: none; gap: 0.5rem; align-items: center; margin-top: 0.5rem; flex-wrap: wrap; }
+  .card .move-row select { padding: 0.3rem; border: 1px solid #ccc; border-radius: 4px; }
+  .card .move-row button.confirm { background: #2563eb; color: white; border: none; }
+  .card .move-row button.confirm:hover { background: #1d4ed8; }
   #status { color: #666; font-size: 0.9rem; margin-bottom: 1rem; }
 </style>
 </head>
@@ -243,6 +247,8 @@ function renderCard(item) {
   const saveBtn = document.createElement('button');
   saveBtn.textContent = 'Save';
   saveBtn.className = 'save';
+  const moveBtn = document.createElement('button');
+  moveBtn.textContent = 'Move';
   const deleteBtn = document.createElement('button');
   deleteBtn.textContent = 'Delete';
   deleteBtn.className = 'danger';
@@ -286,8 +292,80 @@ function renderCard(item) {
 
   actions.appendChild(editBtn);
   actions.appendChild(saveBtn);
+  actions.appendChild(moveBtn);
   actions.appendChild(deleteBtn);
   div.appendChild(actions);
+
+  // Reassigns which user/character/world a memory belongs to. Options come
+  // from /scopes with no filters -- the full, independent list of every
+  // user_id and agent_id that already exists, not narrowed to combinations
+  // that already co-occur (unlike the page-level filters above), since a
+  // move is exactly about creating a combination that may not exist yet.
+  const moveRow = document.createElement('div');
+  moveRow.className = 'move-row';
+  const moveUserSelect = document.createElement('select');
+  const moveAgentSelect = document.createElement('select');
+  const moveConfirmBtn = document.createElement('button');
+  moveConfirmBtn.textContent = 'Confirm move';
+  moveConfirmBtn.className = 'confirm';
+  const moveCancelBtn = document.createElement('button');
+  moveCancelBtn.textContent = 'Cancel';
+  moveRow.appendChild(moveUserSelect);
+  moveRow.appendChild(moveAgentSelect);
+  moveRow.appendChild(moveConfirmBtn);
+  moveRow.appendChild(moveCancelBtn);
+  div.appendChild(moveRow);
+
+  let moveOptionsLoaded = false;
+
+  moveBtn.onclick = async () => {
+    const opening = moveRow.style.display !== 'flex';
+    moveRow.style.display = opening ? 'flex' : 'none';
+    if (opening && !moveOptionsLoaded) {
+      try {
+        const res = await fetch('/scopes');
+        const data = await res.json();
+        fillOptions(moveUserSelect, '-- user_id --', data.user_ids || []);
+        fillOptions(moveAgentSelect, '-- agent_id --', data.agent_ids || []);
+        moveUserSelect.value = item.user_id || '';
+        moveAgentSelect.value = item.agent_id || '';
+        moveOptionsLoaded = true;
+      } catch (err) {
+        alert('Failed to load move options: ' + err.message);
+      }
+    }
+  };
+
+  moveCancelBtn.onclick = () => {
+    moveRow.style.display = 'none';
+  };
+
+  moveConfirmBtn.onclick = async () => {
+    const targetUser = moveUserSelect.value;
+    const targetAgent = moveAgentSelect.value;
+    if (!targetUser) {
+      alert('Pick a user_id to move to.');
+      return;
+    }
+    if (targetUser === item.user_id && targetAgent === item.agent_id) {
+      moveRow.style.display = 'none';
+      return;
+    }
+    if (!confirm(`Move this memory to ${targetUser} / ${targetAgent || 'shared'}?`)) return;
+    moveConfirmBtn.disabled = true;
+    try {
+      const res = await fetch(`/memories/${item.id}/move`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: targetUser, agent_id: targetAgent || null }),
+      });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      load();
+    } catch (err) {
+      alert('Move failed: ' + err.message);
+      moveConfirmBtn.disabled = false;
+    }
+  };
 
   return div;
 }
