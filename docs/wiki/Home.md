@@ -15,6 +15,7 @@ is the short version for anyone just browsing the repo.
 | [Running the Stack](Running-the-Stack.md) | Getting *this* repo running: cloning it, the model files, SillyTavern config, bringing the stack up, and setting up a separate dev/prod split. |
 | [Changing the Model](Changing-the-Model.md) | Swapping the GGUF, what the test script actually checks, and models verified so far. |
 | [Memory System](Memory-System.md) | The deep dive — the three memory scopes, how facts get extracted and classified, storage, the embedding model, the entity store, world lore, and how it all fits together. |
+| [SillyTavern Troubleshooting](SillyTavern-Troubleshooting.md) | Non-default ST settings and gotchas specific to this project, and why. |
 | [Third-Party Components](Third-Party-Components.md) | Licenses for everything this project wires together. |
 
 ## Source of truth
