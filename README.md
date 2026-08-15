@@ -5,7 +5,7 @@ AutoMemory is a self-hosted memory system for SillyTavern. From your conversatio
 ## Features
 
 - **Three memory scopes** — a **character** memory is private to one relationship between a persona and a character, a **shared** memory follows a person across every character they talk to, and **world lore** belongs to a fictional world itself, retrieved whenever a conversation happens in that world.
-- **Automatic extraction and injection** — memories get pulled out of a conversation and woven back into later replies on their own without needing to ask the model to remember something first.
+- **Automatic extraction and injection** — memories get pulled out of a conversation and woven back into later replies on their own. Retrieval happens via vector similarity search, improving accuracy and relevance over keyword-based approaches.
 - **A management UI** — browse, hand-edit, move to a different scope, or delete any memory by hand, plus dedicated tools for building or migrating a whole world's lore.
 
 See the [wiki](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki) for exactly how all of this works.
@@ -33,6 +33,12 @@ Starting from nothing, or wanting a fully local setup with zero cloud dependency
 </p>
 
 Either way, [Prerequisites](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki/Prerequisites) covers the one-time host setup needed first.
+
+## Limitations and future development
+
+- Only English memories are supported now, but can be changed easily by using a multi-lingual embedding model. See [Memory System](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki/Memory-System).
+- Support for Group chats has not been developed but is planned.
+- Designed originally for deployment on a local device with limited 6 GB VRAM, so memory extraction and conversation use the same model.
 
 ## Wiki
 
