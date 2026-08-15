@@ -1,8 +1,7 @@
 # Changing the Model
 
 One model serves both roleplay generation and memory extraction (see
-[Memory System](Memory-System.md) for why that's enforced automatically rather than
-by convention) — swapping it is a config change plus a test run, not a code change.
+[Memory System](Memory-System.md))
 
 ## Steps
 
