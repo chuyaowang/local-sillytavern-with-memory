@@ -1,0 +1,26 @@
+name: Publish Wiki
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs/wiki/**'
+  workflow_dispatch:
+
+jobs:
+  publish-wiki:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # To checkout the repo and push to the wiki
+    steps:
+      - name: Checkout main repository
+        uses: actions/checkout@v6
+
+      - name: Sync Wiki Content
+        uses: Andrew-Chen-Wang/github-wiki-action@v5
+        with:
+          # The path in the source repository to publish to the wiki
+          path: docs/wiki
+          # The commit message for the wiki repository
+          commit-message: "docs: auto-sync wiki from main repo"
