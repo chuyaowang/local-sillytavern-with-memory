@@ -155,51 +155,110 @@ the shared/character split above:
   returns which worlds have lore, and the existing admin UI (`/ui`)
   already browses/edits/deletes them by picking `user_id=world` from its
   dropdown.
-- **Character→world binding reuses ST's own `character.data.extensions.world`
-  field** (the character panel's globe-icon "Primary Lorebook" picker)
-  instead of a separate mapping — confirmed empirically that ST never
-  rewrites the bound world file on its own (wiped `sillytavern/data`
-  entirely, a brand-new container with zero chat messages already had
-  `Eldoria.json` + `Seraphina` present — bundled default content baked
+- **World binding: persona first, then character.** A character picks up
+  a world through its own card (`character.data.extensions.world`, the
+  globe-icon "Primary Lorebook" picker) — reused as-is instead of a
+  separate mapping, confirmed empirically that ST never rewrites the
+  bound world file on its own (wiped `sillytavern/data` entirely, a
+  brand-new container with zero chat messages already had both
+  `Eldoria.json` and `Seraphina` present — bundled default content baked
   into the SillyTavern image's `/home/node/app/default/content/`, seeded
   on first run, not written by ST or mem0 over time), so it's safe to
-  leave the binding field in place while emptying that world file's
-  `entries` to `{}` — ST's keyword scanner then has nothing to match,
-  killing double-injection, while the roleplay-memory extension keeps
-  reading the same field as pure metadata (`getBoundWorld()`, sent as
-  `world` on both `/context` and `/add`).
+  leave the binding field in place while emptying that world file's `entries` to
+  `{}` — ST's keyword scanner then has nothing to match, killing
+  double-injection, while the extension keeps reading the same field as
+  pure metadata. A *persona* can also bind to a world independently
+  (`power_user.persona_description_lorebook`, ST's own per-persona
+  lorebook picker, confirmed exposed via `getContext().powerUserSettings`
+  — same live object, not a snapshot). The extension's `resolveWorld()`
+  checks the persona binding first, falling back to the active
+  character's — so a persona bound to a world determines it even when
+  talking to a character that isn't itself bound to one.
 - **Two ways lore gets written, both automatic — never manually posted
   during normal use:**
   1. **Passive**, during ordinary roleplay: the existing shared/character
      classifier (`classify_facts` in `mem0-service/main.py`) is 3-way —
-     shared / character-private / world — for whichever world the active
-     character is bound to. The prompt is told *which* world is relevant
-     (from the request's `world` field) rather than guessing/naming it, so
-     it only judges yes/no per candidate fact.
+     shared / character-private / world. It does **not** re-extract facts
+     from the raw conversation — an earlier version did, independently
+     re-deriving its own view of what counted as shared/world, and was
+     unreliable about respecting its own "exclude character personality/
+     traits" rule (observed leaking a character's job/habits into shared
+     memory). It now operates on the memory items Pass 1 (mem0's own
+     extraction, run moments earlier in the same `add_memory()` call)
+     already produced: the prompt states all three scopes plainly
+     (character/shared/world), and classifies each item by number rather
+     than retyping its text — selected facts are looked up verbatim by
+     index afterward, not trusted to be reproduced unchanged.
   2. **Active**, via a **World Creator** agent: a plain SillyTavern
      character (not a special API flag — ST's character panel has no UI
      for arbitrary custom `extensions` fields) that must be named exactly
      `World Weaver`, detected client-side by name. Card JSON lives at
      `sillytavern/character-cards/world-weaver.json` (import via ST's
-     character panel, once per environment — not auto-installed). Talked
-     to like any character; its exchanges route to `POST /worlds/interview`
-     instead of
-     the normal `/add` path — a dedicated extraction prompt
-     (`WORLD_INTERVIEW_PROMPT`) identifies both the world's name *and* its
-     facts from the interview transcript, since (unlike a roleplay
-     character) it isn't bound to one fixed world going in. World-scope
-     only — deliberately does **not** also run shared-fact classification
-     against the interview transcript (considered and rejected: an
-     interview isn't a conversation with a character, so there's no
-     relationship dimension, and mixing concerns wasn't worth the added
-     complexity). Because it writes into the same store the passive path
-     reads from, a lorebook built this way is available immediately in a
-     fresh roleplay session bound to that world — no import/export step.
+     character panel, once per environment — not auto-installed). Its
+     exchanges route to `POST /worlds/interview` instead of the normal
+     `/add` path — a dedicated extraction prompt (`WORLD_INTERVIEW_PROMPT`)
+     identifies both the world's name *and* its facts from the interview
+     transcript, since (unlike a roleplay character) it isn't bound to one
+     fixed world going in. World-scope only — deliberately does **not**
+     also run shared-fact classification against the interview transcript
+     (an interview isn't a conversation with a character, so there's no
+     relationship dimension). Because it writes into the same store the
+     passive path reads from, a lorebook built this way is available
+     immediately in a fresh roleplay session bound to that world.
+     - Flushes after **every** exchange rather than batching like ordinary
+       roleplay chat — the push-side buffer only lives in the browser
+       tab's memory, never persisted, and losing an answer to a closed tab
+       before the normal token/idle threshold fired wasn't an acceptable
+       tradeoff for World Weaver's low-volume, deliberate exchanges.
+     - Its own pull-side memory injection is muted entirely (extension
+       prompt slot explicitly cleared, not just skipped over — it isn't
+       per-character, so a prior character's injected memories would
+       otherwise still be sitting in it) — building a new world from a
+       clean slate, and injecting memories (especially lore from an
+       existing bound world, easy to trigger if the persona itself is
+       bound to one) would contaminate it.
+     - The card's `mes_example` originally included a concrete sample
+       interview (a fictional "Kivotos" world). The model treated it as
+       real prior context rather than a style example — after the user
+       only stated a world's name, it immediately asserted the sample's
+       specific facts as already established. Fixed by removing the
+       example entirely and hardening the card's "recap what's
+       established so far" instruction from a soft "when helpful" to
+       unconditional ("every reply... even for a short exchange") — the
+       recap also keeps the world's name present in every isolated
+       single-exchange flush, since the name is usually only stated once.
 - `GET /memories/context` gained an optional `world` param — a third
   `memory.search()` alongside the existing `shared`/`character` ones,
   returned as a `world` key; the extension injects it as a distinct
   `World lore: ...` line, separate from `Relevant memories: ...`, so the
   model can tell setting lore apart from relationship history.
+- **Shared memory is also world-scoped**, via mem0's metadata filtering
+  (confirmed supported — `Memory.search()`'s `filters` dict accepts
+  arbitrary metadata keys with real operators, not just user_id/agent_id/
+  run_id, per its own docstring and `_build_filters_and_metadata()`'s
+  handling of custom metadata). Every shared-fact mirror write is tagged
+  `metadata={"world": resolved_world or NO_WORLD}` (`NO_WORLD = "none"`,
+  a real sentinel rather than an unset field — same reasoning as
+  `SHARED_AGENT_ID`/`WORLD_USER_ID`: mem0's filter DSL has no "field is
+  unset" operator). `get_context()`'s shared query filters to
+  `{"world": {"in": [world, NO_WORLD]}}` — a universal fact always shows,
+  a world-tagged one only resurfaces for that same world. Motivated by an
+  observed leak: "the user's mount is the Aetherian Stride" (personal,
+  Eldoria-specific) was showing up for characters from unrelated
+  settings before this. **Known tradeoff, left as-is on purpose**: the
+  whole batch from one exchange shares one world tag, so a genuinely
+  universal fact (e.g. the user's real name) learned mid-roleplay also
+  stops surfacing for unrelated worlds — fixing that would need the
+  classifier to judge per-fact universality, not just per-fact
+  world-relevance, and wasn't judged worth the added complexity yet.
+- **Character and shared memory are correctly isolated per real user**
+  (verified by reading `_scope()`/`get_context()`'s filters directly) —
+  both are always scoped by the actual `user_id`, so two different people
+  (or personas) talking to the same character never see each other's
+  facts. World lore is the one deliberate exception, scoped under the
+  `user_id="world"` sentinel rather than the real user, so it's genuinely
+  shared across whoever talks about that world — matching that it's meant
+  to represent the setting, not any one person's data.
 - `POST /worlds/{world}/memories` is a low-level write primitive (content
   in, mem0's normal extraction pipeline runs on it, `infer` left at its
   default `True`) — used only by the one-time backfill script
@@ -368,6 +427,16 @@ break the "internal services stay local" posture.
   hallucinate this kind of flourish. Verify via server-side logs/data
   directly (mem0's own request log, direct Qdrant queries) before trusting a
   model's self-report.
+- **SillyTavern's server plugin (`sillytavern/plugins/roleplay-memory/`)
+  only loads its routes once, at container startup** — unlike the client
+  extension, which the browser just fetches fresh on reload. Editing the
+  plugin's code and testing through the UI without restarting the
+  container hits a plain 404 on any new/changed route, easy to misread as
+  a client-side caching issue instead. `docker compose restart
+  sillytavern` (and `sillytavern-prod`, since they share the same
+  bind-mounted plugin source) after any plugin change, confirmed by
+  `docker logs sillytavern | grep -i plugin` showing "Initializing plugin
+  from ...".
 - **llama.cpp's `--fit` (on by default, keeps a VRAM safety margin) only
   adjusts CLI arguments left unset.** Pinning `n-gpu-layers` explicitly (as
   the Q8 preset originally did, copied from the Q4 one) silently disables
@@ -423,9 +492,14 @@ model.
 
 ## Known follow-ups (not yet built)
 
-- [ ] Memory-editing tool — a way to browse/correct/delete stored memories
-      outside of steering a live conversation. Motivated `mem0-service` being
-      a standalone service rather than embedded in the extension/plugin.
+- [x] Memory-editing tool — a way to browse/correct/delete stored memories
+      outside of steering a live conversation, motivated by `mem0-service`
+      being a standalone service rather than embedded in the extension/
+      plugin. Built: `mem0-service`'s `/ui` static page ("Memory Manager"),
+      backed by `GET /scopes` (cross-filtered user_id/agent_id dropdowns)
+      and view/edit/delete/bulk-replace endpoints. Already handles the
+      world-lore scope too (pick `user_id=world`, then a world name) since
+      it's generic over any user_id/agent_id pair, not roleplay-specific.
 - [x] `sillytavern-prod`'s Text Completion connection now has `llamacpp_model:
       gemma-q4` set (was empty) — confirmed directly in its `settings.json`.
 - [x] Ollama-era files (`models/Modelfile`, `models/Modelfile.q8`,
@@ -434,6 +508,19 @@ model.
 - [ ] Decide `ollama`'s longer-term fate — currently kept fully defined but
       unused as a zero-risk fallback (see "Architecture" above), not a
       permanent decision.
-- [ ] Nothing else from the original plan is currently open — vector store,
-      memory scoping, and the ST↔mem0 integration are all decided and
-      implemented (see above).
+- [x] World lore layer (mem0-based, replacing ST's native World Info) is
+      decided and implemented end-to-end — see "World lore" above.
+- [x] World Weaver character imported into dev SillyTavern and verified
+      working (interview → `/worlds/interview` → world-scoped memory,
+      confirmed via a real transcript).
+- [ ] World Weaver character still needs to be imported into **prod**
+      SillyTavern manually (`sillytavern/character-cards/world-weaver.json`,
+      drag-and-drop into the character panel) — `mem0-prod` and
+      `sillytavern-prod` themselves are already rebuilt/restarted with all
+      the world-lore code, just missing this one manual step.
+- [ ] Known, accepted tradeoff in the world-scoped shared-memory fix (see
+      "World lore" above): a genuinely universal fact learned mid-roleplay
+      inherits whatever world was bound at write time and stops surfacing
+      for unrelated worlds, since tagging happens per-batch, not per-fact.
+      Fixing it needs the classifier to also judge per-fact universality —
+      left as a deliberate non-fix, not forgotten.
