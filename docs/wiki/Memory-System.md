@@ -39,18 +39,19 @@ The extraction step relies on a large prompt of its own, around 8,000 tokens, an
 
 ## Sorting a memory into shared or world lore
 
-After a memory is saved for a character, a second pass looks at those same facts and checks whether any of them also belong in shared memory or world lore. It works from the exact list of facts the first pass already produced, so nothing gets reworded along the way.
+After a memory is saved for a character, a second pass looks at those same facts and checks whether any of them actually belong in shared memory or world lore instead. A fact that does gets moved there so it only ever exists in one scope at a time.
 
 ```mermaid
 flowchart TD
     msg["One exchange between a user and a character"] --> extract["Facts are extracted from it"]
     extract --> charmem[("Saved as character memory")]
-    extract --> classify["A second pass checks which facts also apply elsewhere"]
-    classify -->|"general facts about the user"| sharedmem[("Also saved as shared memory")]
-    classify -->|"facts about the setting"| worldmem[("Also saved as world lore")]
+    charmem --> classify["A second pass checks which facts belong elsewhere"]
+    classify -->|"general facts about the user"| sharedmem[("Moved to shared memory")]
+    classify -->|"facts about the setting"| worldmem[("Moved to world lore")]
+    classify -->|"specific to this character"| stays[("Stays as character memory")]
 ```
 
-This second pass is best-effort. If it fails for any reason, the character memory from the first pass is saved regardless.
+This second pass is best-effort. If it fails for any reason, the character memory from the first pass stays as is.
 
 ## Automatic model sync
 

@@ -274,7 +274,7 @@ user, and not about any one character's own personality or traits.
 """
 
 
-def classify_facts(mem: "Memory", character_memories: list[str], world: Optional[str] = None) -> dict:
+def classify_facts(mem: "Memory", character_memories: list[dict], world: Optional[str] = None) -> dict:
     # Best-effort: this is a secondary enrichment step layered on top of the
     # primary (always-succeeds) character-scoped write below, so any failure
     # here is swallowed rather than breaking the add() call. Operates on the
@@ -284,9 +284,14 @@ def classify_facts(mem: "Memory", character_memories: list[str], world: Optional
     # Numbers in, numbers out: the model classifies by index rather than
     # retyping fact text, so selected facts are looked up verbatim instead
     # of trusting the model to reproduce them unchanged.
+    #
+    # character_memories items are {"id": ..., "memory": ...} -- the id is
+    # carried through (not just the text) so add_memory() can delete the
+    # character-scoped original once a fact has been moved elsewhere; a
+    # memory only ever lives in one scope at a time, never mirrored.
     if not character_memories:
         return {"shared_facts": [], "world_facts": []}
-    memory_list = "\n".join(f"{i + 1}. {m}" for i, m in enumerate(character_memories))
+    memory_list = "\n".join(f"{i + 1}. {m['memory']}" for i, m in enumerate(character_memories))
     world_section = WORLD_SECTION_TEMPLATE.format(world=world) if world else ""
     prompt = CLASSIFICATION_PROMPT_TEMPLATE.format(world_section=world_section)
     try:
@@ -300,7 +305,7 @@ def classify_facts(mem: "Memory", character_memories: list[str], world: Optional
         data = json.loads(response)
         n = len(character_memories)
 
-        def _lookup(indices) -> list[str]:
+        def _lookup(indices) -> list[dict]:
             return [character_memories[i - 1] for i in indices if isinstance(i, int) and 1 <= i <= n]
 
         shared_facts = _lookup(data.get("shared", []))
@@ -407,10 +412,20 @@ def add_memory(req: AddMemoryRequest):
     # Only classify when this write was character-scoped -- a call already
     # targeting the shared bucket has nothing further to route.
     if req.agent_id:
-        character_memories = [r["memory"] for r in result.get("results", []) if r.get("memory")]
+        character_memories = [
+            {"id": r["id"], "memory": r["memory"]} for r in result.get("results", []) if r.get("id") and r.get("memory")
+        ]
         facts = classify_facts(mem, character_memories, world=req.world)
+
+        # A memory only ever lives in one scope at a time: once a fact is
+        # confirmed moved into shared or world scope below, its
+        # character-scoped original is deleted -- never mirrored/kept in
+        # both places. Collected here and deleted only after every move
+        # below has actually succeeded, so a failed move never loses data.
+        moved_ids: set[str] = set()
+
         if facts["shared_facts"]:
-            shared_messages = [{"role": "user", "content": fact} for fact in facts["shared_facts"]]
+            shared_messages = [{"role": "user", "content": f["memory"]} for f in facts["shared_facts"]]
             shared_filters = {"user_id": req.user_id, "agent_id": SHARED_AGENT_ID}
             shared_result = mem.add(
                 shared_messages,
@@ -422,13 +437,22 @@ def add_memory(req: AddMemoryRequest):
             for r in shared_result.get("results", []):
                 if r.get("id") and r.get("memory"):
                     _link_entities(mem, r["id"], r["memory"], shared_filters)
+            moved_ids.update(f["id"] for f in facts["shared_facts"])
+
         if facts["world_facts"]:
-            world_messages = [{"role": "user", "content": fact} for fact in facts["world_facts"]]
+            world_messages = [{"role": "user", "content": f["memory"]} for f in facts["world_facts"]]
             world_filters = {"user_id": WORLD_USER_ID, "agent_id": req.world}
             world_result = mem.add(world_messages, user_id=WORLD_USER_ID, agent_id=req.world, infer=False)
             for r in world_result.get("results", []):
                 if r.get("id") and r.get("memory"):
                     _link_entities(mem, r["id"], r["memory"], world_filters)
+            moved_ids.update(f["id"] for f in facts["world_facts"])
+
+        for memory_id in moved_ids:
+            try:
+                mem.delete(memory_id)
+            except Exception:
+                pass
 
     return result
 
