@@ -1,6 +1,6 @@
 # Managing Memories
 
-Memories build up automatically during ordinary roleplay, but they can also be browsed, edited, moved, or deleted by hand, and world lore can be built deliberately instead of picked up passively. This page covers the concepts needed to do that — the three scopes a memory can belong to — and the actual tools: the admin UI, World Weaver, and the lorebook migration button.
+Memories build up automatically during ordinary roleplay, but they can also be browsed, edited, moved, or deleted by hand, and world lore can be built deliberately instead of picked up passively. This page covers the concepts needed to do that: the three scopes a memory can belong to and the actual tools: the admin UI, World Weaver, and the lorebook migration button.
 
 The examples below use two people, Nova and Amber, two characters, Seraphina and Arthuria, and two worlds, Eldoria and Camelot, to make the scoping concrete. Nova roleplays with Seraphina, who is bound to Eldoria. Amber roleplays with Arthuria, who is bound to Camelot.
 
@@ -31,6 +31,8 @@ Note: here we assume each character, like Seraphina, is bound to only one world,
 - **Passively**, during ordinary roleplay: facts about the world get picked out alongside the usual shared/character memory extraction (see [Memory System's "Sorting a memory" section](Memory-System.md#sorting-a-memory-into-shared-or-world-lore)), for whichever world is currently bound. This is how Eldoria's lore built up as Nova talked to Seraphina.
 - **Actively**, with a dedicated interviewer character: import `sillytavern/character-cards/world-weaver.json` into SillyTavern, keeping the name exactly **World Weaver**, and talk to it like any other character. It asks about a world one question at a time and writes straight into that world's lore. This is how Camelot's lore could be built from scratch before Amber ever starts roleplaying with Arthuria. Because it writes into the same store the passive path reads from, a lorebook built this way is available immediately in a fresh roleplay session bound to that world. It never pulls in memory context for its own replies, so building a new world stays a clean slate, and every exchange with it is saved right away.
 
+Note that World Weaver performs memory extraction after each conversation, since each interview answer is low-volume and deliberate, and waiting for a token or idle threshold risks losing one if the browser tab closes first.
+
 ## Migrating an existing lorebook
 
 A world that already has lore in SillyTavern's native World Info format does not need to be re-typed through World Weaver. Open that world in SillyTavern's own World Info editor and click the brain icon next to the delete button in its toolbar. It reads every entry in that world and runs each one through the same extraction step as ordinary roleplay, writing the results straight into that world's lore, then offers to clear the World Info file's entries once it is done (see [Configuring the Memory System's "Binding a world" section](Configuring-the-Memory-System.md#binding-a-world) for why that matters).
@@ -39,7 +41,7 @@ This is a one-time backfill, not something to repeat after every change, and it 
 
 ## Browsing and editing memories
 
-The memory manager is a small admin page at `http://localhost:8001/ui/`, local only — not reachable over Tailscale, by design (see [Remote Access](Remote-Access.md)).
+The memory manager is a small admin page at `http://localhost:8001/ui/`, local only and not reachable over Tailscale, by design (see [Remote Access](Remote-Access.md)).
 
 1. Pick a `user_id` from the first dropdown — every memory belongs to one, including world lore, which is filed under a fixed placeholder user called `world` instead of a real person.
 2. Pick an `agent_id` to narrow to one scope (a character, `shared`, or a world name), or leave it on "All scopes" to see everything for that user_id at once.
@@ -50,7 +52,7 @@ Each card shows the memory's text alongside its scope, linked user, and world ta
 
 ## Moving a memory to a different scope
 
-**Move** reassigns which user, character, or world a memory is filed under, without deleting and re-extracting it — useful for fixing a memory that landed in the wrong scope, or reattributing something after the fact. Clicking it reveals two dropdowns, populated from every user and character/world that already exists anywhere in the store, not just combinations that are already paired together, since the point of a move is often creating one that does not exist yet. Pick the target and confirm — the memory's text and how it is found by search stay exactly the same; only its labels change.
+**Move** reassigns which user, character, or world a memory is filed under, without deleting and re-extracting it — useful for fixing a memory that landed in the wrong scope, or reattributing something after the fact. Clicking it reveals two dropdowns, populated from every user and character/world that already exists anywhere in the store. Pick the target and confirm.
 
 ## Bulk find-and-replace
 

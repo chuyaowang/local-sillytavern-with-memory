@@ -1,40 +1,38 @@
-# Local SillyTavern with Memory Management
+# AutoMemory for SillyTavern
 
-A self-hosted memory system for SillyTavern: it remembers facts about you, your characters, and your fictional worlds across conversations, sorted automatically into the right scope. It works with whichever backend SillyTavern is already connected to — a cloud API, an aggregator like OpenRouter, or a local model — so there is nothing extra to configure just for memory. This repo also bundles a complete local chat stack as the easiest way to try the whole thing with zero cloud dependency, but that bundled stack is not required — point SillyTavern at a different backend instead and the memory system works the same way.
+AutoMemory is a self-hosted memory system for SillyTavern. From your conversations, it automatically decides what is worth remembering and what facts to bring back without a need for manual curation of memories or setting injection rules.
 
-## The pieces
+## Features
 
-- **mem0 on Qdrant** is the memory engine, and the actual point of this project — it decides what is worth remembering from a conversation, stores it, and pulls relevant memories back out when they are needed.
-- **SillyTavern**, wired up to mem0 through a plugin and extension, is the chat frontend. Memory extraction runs through whatever connection SillyTavern already has active, so there is no separate model to configure just for memory.
-- **llama.cpp**, bundled and optional, runs a local model on your own GPU. It handles chat generation if nothing else is connected, and always serves the memory system's own embedding model, so the whole thing works with zero cloud dependency out of the box if that is what is wanted.
+- **Three memory scopes** — a **character** memory is private to one relationship between a persona and a character, a **shared** memory follows a person across every character they talk to, and **world lore** belongs to a fictional world itself, retrieved whenever a conversation happens in that world.
+- **Automatic extraction and injection** — memories get pulled out of a conversation and woven back into later replies on their own without needing to ask the model to remember something first.
+- **A management UI** — browse, hand-edit, move to a different scope, or delete any memory by hand, plus dedicated tools for building or migrating a whole world's lore.
 
-The memory services here — Qdrant, mem0, and llama.cpp — run in Docker, bound to localhost only. The bundled SillyTavern, if used, is the one piece exposed beyond localhost, reachable locally or from another device over Tailscale, with basic auth and an IP whitelist on top.
+See the [wiki](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki) for exactly how all of this works.
+
+## Example
+
+<p align="center">
+  <img src="docs/wiki/diagrams/memory-system-1.svg" alt="Which scopes are visible in each conversation" width="600">
+</p>
+
+Nova (user), in a conversation with Seraphina (character) in the Eldoria world, has access to memories about herself in Eldoria, her interaction with Seraphina in Eldoria, and the world Eldoria. Similarly, another user Amber's interactions with another character Arthuria are memorized for the Camelot world.
+
+When Nova talks to Cynthia, another character, in the Eldoria world, their conversation does not have access to the Seraphina memory.
+
+When Amber talks to Seraphina in the Eldoria world, their conversation only has access to the Eldoria world memory.
+
+## Setup
+
+Already have SillyTavern running, with a chat connection configured? Follow [Installing the Memory System](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki/Installing-the-Memory-System) to add this to it — nothing about how it generates replies needs to change.
+
+Starting from nothing, or wanting a fully local setup with zero cloud dependency instead? [Local-Only Setup](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki/Local-Only-Setup) bundles a complete stack: a local model and SillyTavern itself, wired up together.
 
 <p align="center">
   <img src="docs/architecture/architecture.svg" alt="Architecture diagram" width="420">
 </p>
 
-## What it can actually do right now
-
-- Chat in SillyTavern with whatever backend is already connected, cloud or local, while remembering facts about you, per-character relationships, and lore about fictional worlds, sorted into the right layer automatically.
-- Try the whole thing with zero cloud dependency using the bundled local stack, including an uncensored local model by default.
-- Browse, hand-edit, delete, or bulk find-and-replace memories through a small web UI.
-- Reach the whole thing from another device over Tailscale, without exposing anything to the open internet.
-
-See the [wiki](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki) for how the memory system actually works.
-
-## Quick start
-
-1. Read [Prerequisites](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki/Prerequisites): a Linux computer with an NVIDIA GPU and Docker Engine.
-2. Follow [Installing the Memory System](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki/Installing-the-Memory-System) to add this to a SillyTavern that is already running, with its own chat connection already configured — clone the repo, get the embedding model, and bring up the memory services:
-
-   ```bash
-   git clone https://github.com/chuyaowang/local-sillytavern-with-memory.git
-   cd local-sillytavern-with-memory
-   docker compose up -d qdrant mem0 llama-cpp
-   ```
-
-No existing SillyTavern, or a fully local setup with zero cloud dependency is wanted instead? [Local-Only Setup](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki/Local-Only-Setup) covers that as a further, optional step.
+Either way, [Prerequisites](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki/Prerequisites) covers the one-time host setup needed first.
 
 ## Wiki
 
