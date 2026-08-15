@@ -21,7 +21,8 @@ Everything runs in Docker on one machine. Only SillyTavern is exposed beyond loc
 - Store memories about you locally:
   - Shared memory layer: facts about you (favorite foods, your job, whatever comes up)
   - Character-specific memory layer: things specific to one character's relationship/history with you
-  - Automatically sort which is which and separately store the two layers
+  - World lore layer: facts about a fictional setting itself, shared by every character and every conversation bound to that world — picked up automatically as you roleplay, or built deliberately by interviewing a dedicated "World Weaver" character (see [World lore](#world-lore) below)
+  - Automatically sort which is which and separately store the layers
   - Browse, hand-edit, delete, or bulk find-and-replace memories through a small web UI, without touching the database directly
 - Reach the whole thing from another device (phone, laptop) over Tailscale without exposing anything to the open internet
 
@@ -138,6 +139,21 @@ Results from running `scripts/test-model-llama-cpp.sh` against each model, for r
 | [Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q8_K_P](https://huggingface.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive/blob/main/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q8_K_P.gguf) | Pass | ~4.7-5.7 GB | Pass | Pass |
 
 Q8 fits, but with a real speed tradeoff when the embedder also needs VRAM — see [docs/LLAMA_CPP_BENCHMARK.md](docs/LLAMA_CPP_BENCHMARK.md) for the full story. Q4 is the safer everyday default.
+
+## World lore
+
+Beyond the shared/character memory layers above, there's a third one for lore about a fictional setting itself — geography, history, factions, whatever's true about the world regardless of which character or which conversation you're in. It replaces SillyTavern's built-in World Info/lorebook system, which only matches lore into the prompt by literal keyword — this uses the same embedding-based retrieval as the rest of mem0, so a paraphrased question still finds the relevant lore.
+
+**Binding a world**: a character picks up a world through its own card (the globe icon in the character panel — SillyTavern's own "Primary Lorebook" picker, reused as-is rather than building a separate system), or through your persona (the persona panel's own lorebook picker) if the active character isn't bound to one itself. A persona binding takes priority over a character's.
+
+**Building lore, two ways:**
+
+- *Passively*, just by roleplaying — facts about the setting that come up naturally in conversation get picked out automatically alongside the usual shared/character memory sorting.
+- *Actively*, with a dedicated interviewer character: import `sillytavern/character-cards/world-weaver.json` (drag-and-drop into SillyTavern's character panel — keep the name exactly "World Weaver", it's how the extension recognizes it) and talk to it like any other character. It asks about a world one question at a time and writes straight into that world's lore — no separate import step, what it builds is available immediately in any roleplay session bound to that world.
+
+If you already have lore in SillyTavern's native World Info for a world you want to migrate in, `scripts/migrate-lorebook-to-mem0.sh <world-json-file> <world-name>` reads its entries and runs them through the same extraction pipeline. Afterward, empty that World Info file's own entries (leave the character/persona binding itself in place) so SillyTavern's native keyword-matching doesn't also fire and double up.
+
+See [CLAUDE.md](CLAUDE.md) if you want the full architecture writeup.
 
 ## Setting up a dev vs. prod environment
 
