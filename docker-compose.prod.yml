@@ -35,11 +35,8 @@ services:
     environment:
       MEM0_TELEMETRY: "False"
       QDRANT_HOST: qdrant-prod
-      # See docker-compose.yml's mem0 service for why these settings --
-      # same llama-cpp backend, shared between dev and prod.
-      MEM0_LLM_PROVIDER: "openai"
-      MEM0_LLM_BASE_URL: "http://llama-cpp:8080/v1"
-      MEM0_LLM_MODEL: "gemma-q4"
+      # See docker-compose.yml's mem0 service for why there's no MEM0_LLM_*
+      # here -- same llama-cpp-backed embedder, shared between dev and prod.
       MEM0_EMBEDDER_PROVIDER: "openai"
       MEM0_EMBEDDER_BASE_URL: "http://llama-cpp:8080/v1"
     ports:

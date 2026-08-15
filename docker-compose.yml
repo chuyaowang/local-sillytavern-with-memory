@@ -79,18 +79,15 @@ services:
     restart: unless-stopped
     environment:
       MEM0_TELEMETRY: "False"
-      # Roleplay and extraction always share one model, by design (see "One
-      # unified model..." in CLAUDE.md) -- enforced automatically, not by
-      # convention: the SillyTavern extension sends its own active model
-      # with every extraction request, mem0-service asks llama-cpp what
-      # models actually exist (GET /models, no hardcoded names) and builds
-      # one instance per discovered model, then picks the one matching the
-      # request. MEM0_LLM_MODEL below is just the fallback default for
-      # requests that don't specify one. See mem0-service/main.py and
-      # sillytavern/extensions/roleplay-memory/index.js.
-      MEM0_LLM_PROVIDER: "openai"
-      MEM0_LLM_BASE_URL: "http://llama-cpp:8080/v1"
-      MEM0_LLM_MODEL: "gemma-q4"
+      # mem0-service has no LLM config of its own: extraction and
+      # classification run through SillyTavern's own active connection
+      # instead (see mem0-service/main.py's extraction_prompt()/
+      # extraction_store() and sillytavern/extensions/roleplay-memory/
+      # index.js's flushBuffer()), so it follows whatever backend/model the
+      # user has configured there -- llama.cpp, OpenAI, Claude, anything ST
+      # supports -- with nothing to keep in sync here. The embedder is the
+      # one piece still configured directly, since embeddings aren't
+      # something a chat connection can be asked to produce generically.
       MEM0_EMBEDDER_PROVIDER: "openai"
       MEM0_EMBEDDER_BASE_URL: "http://llama-cpp:8080/v1"
     ports:
