@@ -10,28 +10,36 @@ Every memory belongs to one of three scopes: who it is about, and which category
 
 | Scope | Example fact | Belongs to | Visible to |
 | --- | --- | --- | --- |
-| **Character** | "Seraphina's favorite color is silver" | Nova | only Nova, only in conversations with Seraphina |
+| **Character** | "Seraphina promised to protect Nova through the night" | Nova | only Nova, only in conversations with Seraphina |
 | **Shared** | "Nova works as a veterinarian" | Nova | every character Nova talks to (optionally limited to one world, see below) |
 | **World lore** | "Eldoria's forest was corrupted by the Shadowfangs" | no one in particular | anyone talking about Eldoria, Nova or Amber alike |
 
 ```mermaid
-flowchart LR
-    subgraph dims["What determines a memory's scope"]
-        who["Who it is about"]
-        cat["Which category it is filed under"]
-    end
+flowchart TD
+    char(("Character memory"))
+    shared(("Shared memory"))
+    world(("World lore"))
 
-    who -->|"Nova"| char["Character memory<br/>Nova's history with Seraphina"]
-    cat -->|"Seraphina"| char
+    nova["Nova"]
+    seraphina["Seraphina"]
+    amber["Amber"]
+    arthuria["Arthuria"]
 
-    who -->|"Nova"| shared["Shared memory<br/>general facts about Nova"]
-    cat -->|"the shared category"| shared
+    char -->|"Nova's history with Seraphina"| nova
+    char --> seraphina
+    char -->|"Amber's history with Arthuria"| amber
+    char --> arthuria
 
-    who -->|"no one in particular"| world["World lore<br/>facts about Eldoria"]
-    cat -->|"Eldoria"| world
+    shared -->|"general facts about Nova"| nova
+    shared -->|"general facts about Amber"| amber
+
+    world -->|"Eldoria's lore"| nova
+    world -->|"Eldoria's lore"| seraphina
+    world -->|"Camelot's lore"| amber
+    world -->|"Camelot's lore"| arthuria
 ```
 
-Nova and Amber can both talk to Seraphina at different times, but neither sees what the other told her — character and shared memory are always tied to the real person. World lore is the exception: nothing ties it to Nova or Amber specifically, so both of them see the same facts about Eldoria.
+Character and shared memory are always tied to the real person: nothing Nova tells Seraphina is visible to Amber, and nothing in Nova's shared memory carries over to Amber either. World lore is the exception: nothing ties it to Nova or Amber specifically, so both of them see the same facts about whichever world they are talking about.
 
 ## World lore
 
