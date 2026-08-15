@@ -49,7 +49,7 @@ In SillyTavern: Manage Extensions tab on the top band → enable **Roleplay Memo
 ## Where things are once it's running
 
 - SillyTavern: `http://localhost:8000` locally, or `http://<tailscale-ip-of-host>:8000` from a whitelisted device over Tailscale (see [Remote Access](Remote-Access.md)).
-- Memory manager UI, for browsing/editing/deleting memories by hand: `http://localhost:8001/ui/`, local only.
+- Memory manager UI, for browsing/editing/deleting memories by hand: `http://localhost:8001/ui/`, local only. See [Installing the Memory System](Installing-the-Memory-System.md#if-port-8001-is-already-taken) if this port is already in use by something else.
 - Raw mem0 API docs, for debugging: `http://localhost:8001/docs`.
 - Qdrant dashboard, for debugging: `http://localhost:6333/dashboard`.
 

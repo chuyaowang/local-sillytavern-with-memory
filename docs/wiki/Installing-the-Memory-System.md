@@ -30,6 +30,14 @@ docker compose up -d qdrant mem0 llama-cpp
 
 llama.cpp here only serves the embedding model from the previous step — it is not doing any chat generation in this setup. A different embedding endpoint can be used instead if a local one is not wanted either — see [Memory System's Storage section](Memory-System.md#storage).
 
+### If port 8001 is already taken
+
+mem0 needs to be reachable at `localhost:8001` on the host — the admin UI and a separately-installed SillyTavern both need to reach it from outside Docker, where the internal address `mem0:8001` used between containers does not resolve. If something else on the machine is already using port 8001, bringing mem0 up fails with a clear error (`port is already allocated`); nothing else in the stack is affected.
+
+There's no need to find and stop whatever else is using it — the port number itself is arbitrary and easy to change. Open `docker-compose.yml`, find the `mem0` service's `ports:` line (`"127.0.0.1:8001:8001"`), and change the first `8001` to a free port, for example `"127.0.0.1:18001:8001"`. The second `8001` is the container's own internal port and should stay as is — it is what everything inside Docker keeps using regardless. After changing it, use that new port everywhere `localhost:8001` shows up elsewhere in these docs (the admin UI, and step 4 below if bringing a separate SillyTavern).
+
+If mem0 gets stuck restarting after a failed attempt like this, `docker compose up -d --force-recreate mem0` clears it.
+
 ## 4. Add the plugin and extension to SillyTavern
 
 Copy or symlink two folders from this cloned repo into the existing SillyTavern installation:
@@ -39,7 +47,7 @@ Copy or symlink two folders from this cloned repo into the existing SillyTavern 
 
 In that SillyTavern's own `config.yaml`, set `enableServerPlugins: true` and restart it — server plugins only load at startup, so a running instance needs a restart to pick this up.
 
-The plugin reaches mem0 over the `MEM0_URL` environment variable, which defaults to `http://mem0:8001` (the address it resolves to inside this repo's own Docker network). If SillyTavern is a separate installation running on the same machine, set `MEM0_URL=http://localhost:8001` in the environment it runs in. mem0 is bound to localhost only, by design, so this setup assumes SillyTavern and mem0 are on the same machine — reaching mem0 from a SillyTavern on a different machine entirely is outside what this guide covers.
+If SillyTavern is a separate installation running on the same machine, open the copied `plugins/roleplay-memory/index.js` file and change `mem0:8001` near the top to `localhost:8001`, then restart SillyTavern. This setup assumes SillyTavern and mem0 are on the same machine — reaching mem0 from a SillyTavern on a different machine entirely is outside what this guide covers.
 
 ## 5. Turn on the extension
 
@@ -55,6 +63,6 @@ Testing changes against the memories used day to day risks polluting real data. 
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d qdrant-prod mem0-prod
 ```
 
-This shares llama.cpp with the primary store (GPU/VRAM is the scarce resource, no reason to load the embedding model twice) but keeps memory data completely separate, reachable at `http://localhost:8011` instead of `:8001`. Point the plugin's `MEM0_URL` at whichever one is wanted for a given SillyTavern instance, or run two SillyTavern installations, each pointed at its own.
+This shares llama.cpp with the primary store (GPU/VRAM is the scarce resource, no reason to load the embedding model twice) but keeps memory data completely separate, reachable at `http://localhost:8011` instead of `:8001`. Switch a SillyTavern installation between the two the same way as above — edit the address in its copied `plugins/roleplay-memory/index.js` and restart it — or run two separate SillyTavern installations, each pointed at its own.
 
 This project also bundles its own second SillyTavern container (`sillytavern-prod`) alongside `qdrant-prod`/`mem0-prod`, and a `make prod-up`/`make dev-up` shortcut that brings up all three together — see [Local-Only Setup](Local-Only-Setup.md#setting-up-a-dev-vs-prod-environment) if using the bundled SillyTavern instead of a separate installation, since that is where a second bundled SillyTavern container is actually useful.
