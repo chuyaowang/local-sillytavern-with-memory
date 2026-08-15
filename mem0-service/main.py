@@ -1,19 +1,17 @@
 import json
 import os
 import re
-import time
-import urllib.error
-import urllib.request
+import threading
 import uuid
+from contextlib import contextmanager
 from typing import Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from qdrant_client.models import FieldCondition, Filter, MatchValue
 from mem0 import Memory
-from mem0.configs.prompts import ADDITIVE_EXTRACTION_PROMPT, generate_additive_extraction_prompt
-from mem0.memory.utils import extract_json, parse_messages, remove_code_blocks
+from mem0.memory.utils import extract_json, remove_code_blocks
 from mem0.utils.entity_extraction import extract_entities_batch
 
 OLLAMA_BASE_URL = "http://ollama:11434"
@@ -24,48 +22,20 @@ OLLAMA_BASE_URL = "http://ollama:11434"
 # serve either one depending on which compose service sets it.
 QDRANT_HOST = os.environ.get("QDRANT_HOST", "qdrant")
 
-# Model is swappable per-container the same way -- lets a throwaway
-# container (e.g. scripts/test-model.sh) evaluate a candidate model without
-# touching the real dev/prod mem0 containers or their config.
-MEM0_LLM_MODEL = os.environ.get("MEM0_LLM_MODEL", "gemma4-e4b-hauhaucs")
-
-# Same idea for the collection name -- a throwaway container can write to a
-# scratch collection instead of the real "roleplay_memories" store.
+# Lets a throwaway container write to a scratch collection instead of the
+# real "roleplay_memories" store.
 QDRANT_COLLECTION = os.environ.get("QDRANT_COLLECTION", "roleplay_memories")
 
-# Lets a throwaway container (e.g. scripts/test-model-llama-cpp.sh) point the
-# LLM at a different backend entirely -- llama.cpp's server speaks the
-# OpenAI-compatible API, not Ollama's, so this needs its own provider and
-# base URL rather than just swapping the model name. Defaults preserve the
-# existing Ollama-only behavior for the real dev/prod containers.
-MEM0_LLM_PROVIDER = os.environ.get("MEM0_LLM_PROVIDER", "ollama")
-MEM0_LLM_BASE_URL = os.environ.get("MEM0_LLM_BASE_URL", OLLAMA_BASE_URL)
-
-def _llm_config(model: str) -> dict:
-    if MEM0_LLM_PROVIDER == "openai":
-        return {
-            "provider": "openai",
-            "config": {
-                "model": model,
-                "openai_base_url": MEM0_LLM_BASE_URL,
-                # llama.cpp's server doesn't check this, but the openai client
-                # library requires a non-empty key to be set.
-                "api_key": "not-needed",
-            },
-        }
-    return {
-        "provider": "ollama",
-        "config": {
-            "model": model,
-            "ollama_base_url": MEM0_LLM_BASE_URL,
-        },
-    }
-
-
-# Same swap for the embedder -- lets a throwaway container point it at a
-# llama.cpp server running the same nomic-embed-text-v1.5 GGUF instead of
-# Ollama's copy, so an all-llama.cpp pipeline can be tested without Ollama
-# in the loop at all. Defaults preserve the existing Ollama-only behavior.
+# The embedder is the one piece mem0-service still calls directly -- text
+# generation for every live path (extraction, classification, World Weaver)
+# now runs through SillyTavern's own active connection instead (see
+# extraction_prompt()/extraction_store() below), so it follows whatever
+# backend the user has configured there, automatically. Embeddings can't
+# follow the same mechanism: most chat-only backends don't expose an
+# embedding API at all (Claude has none), so this stays its own,
+# separately-configured, OpenAI-compatible endpoint -- still defaults to the
+# local llama.cpp/nomic-embed-text-v1.5 setup, still swappable to any other
+# OpenAI-compatible embedding endpoint.
 MEM0_EMBEDDER_PROVIDER = os.environ.get("MEM0_EMBEDDER_PROVIDER", "ollama")
 MEM0_EMBEDDER_BASE_URL = os.environ.get("MEM0_EMBEDDER_BASE_URL", OLLAMA_BASE_URL)
 MEM0_EMBEDDER_MODEL = os.environ.get(
@@ -101,100 +71,156 @@ VECTOR_STORE_CONFIG = {
     },
 }
 
-
-def _discover_llm_models() -> list[str]:
-    # Roleplay and extraction always share one model (see CLAUDE.md), and
-    # with llama.cpp's router mode SillyTavern can pick a different one
-    # per-connection at any time. Rather than hardcoding which models exist
-    # anywhere (this deployment's models are whatever the user put in
-    # llama-cpp/models-preset.ini -- not fixed names this code should
-    # assume), ask the router itself what it has via its OpenAI-compatible
-    # GET /models. Only meaningful for the openai provider (llama.cpp);
-    # Ollama's setup here never had multiple switchable models.
-    if MEM0_LLM_PROVIDER != "openai":
-        return [MEM0_LLM_MODEL]
-
-    models_url = MEM0_LLM_BASE_URL.rstrip("/")
-    if models_url.endswith("/v1"):
-        models_url = models_url[: -len("/v1")]
-    models_url += "/models"
-
-    # Retries: mem0 can start before llama-cpp's HTTP server is actually
-    # up (depends_on only waits for container start, not readiness).
-    for _ in range(10):
-        try:
-            with urllib.request.urlopen(models_url, timeout=3) as resp:
-                data = json.loads(resp.read())
-            ids = [
-                m["id"]
-                for m in data.get("data", [])
-                if m.get("id") and m["id"] != MEM0_EMBEDDER_MODEL
-            ]
-            if ids:
-                if MEM0_LLM_MODEL not in ids:
-                    ids.append(MEM0_LLM_MODEL)
-                return ids
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
-            pass
-        time.sleep(3)
-
-    # Discovery never succeeded -- fall back to just the configured
-    # default rather than refusing to start.
-    return [MEM0_LLM_MODEL]
-
-
-# One Memory instance per discovered model -- identical except for
-# llm.config.model, so a per-request model choice is a dict lookup, not a
-# mutation of shared state. Cheap: embedder/vector_store are lightweight
-# HTTP-based clients, not persistent expensive connections.
-memories_by_model: dict[str, "Memory"] = {
-    model_id: Memory.from_config({
-        "llm": _llm_config(model_id),
-        "embedder": embedder_config,
-        "vector_store": VECTOR_STORE_CONFIG,
-    })
-    for model_id in _discover_llm_models()
+# mem0's Memory.__init__ unconditionally builds an LLM client
+# (LlmFactory.create), even though no live path here ever calls it directly
+# -- this placeholder is never invoked (see _CapturePromptLLM/_ReplayLLM and
+# _with_llm() below, which temporarily replace .llm on this one instance for
+# the duration of a single extraction call) and needs no real endpoint or
+# key.
+_PLACEHOLDER_LLM_CONFIG = {
+    "provider": "openai",
+    "config": {"model": "unused", "api_key": "not-needed"},
 }
 
-memory = memories_by_model[MEM0_LLM_MODEL]  # default/fallback instance
+# One shared instance for every route -- including extraction (see
+# _with_llm() below). A fresh Memory per extraction request was tried and
+# reverted: mem0's history db is a single on-disk SQLite file, and its
+# locking is per-connection, not cross-connection, so multiple concurrent
+# instances (e.g. two flushes landing close together) could each open their
+# own connection to that same file and collide, surfacing as an unrelated
+# "database is locked" error with nothing to do with the LLM swap below.
+# One shared instance, one shared connection, guarded by _extraction_lock,
+# avoids that entirely -- confirmed by reading mem0's SQLiteManager
+# directly: its lock is created per-instance in __init__, so it only
+# protects a connection from itself, never from a second instance.
+memory = Memory.from_config({
+    "llm": _PLACEHOLDER_LLM_CONFIG,
+    "embedder": embedder_config,
+    "vector_store": VECTOR_STORE_CONFIG,
+})
 
 
-def _pick_memory(model: Optional[str]) -> "Memory":
-    if model and model in memories_by_model:
-        return memories_by_model[model]
-    return memory
+class _PromptCaptured(Exception):
+    """Sentinel raised by _CapturePromptLLM to unwind out of mem0's real
+    extraction pipeline with the prompt it built, without ever completing
+    generation."""
+
+    def __init__(self, system_prompt: str, user_prompt: str):
+        self.system_prompt = system_prompt
+        self.user_prompt = user_prompt
+
+
+class _CapturePromptLLM:
+    # Swapped in for Memory.llm to intercept the single generate_response()
+    # call Memory._add_to_vector_store() makes (confirmed by reading the
+    # installed mem0 package directly: this version's infer=True path is
+    # exactly one LLM call per add(), with existing-memory context already
+    # folded into that one prompt -- no second merge-decision call). Raising
+    # here aborts before Phase 3 (embedding/storage), so nothing is
+    # persisted -- Phases 0-2 (session scope, existing-memory search, prompt
+    # building) all ran for real first, so the captured prompt is exactly
+    # what mem0 would have sent, not a hand-reconstructed approximation.
+    def generate_response(self, messages=None, response_format=None, **kwargs):
+        system_prompt = next((m["content"] for m in (messages or []) if m.get("role") == "system"), "")
+        user_prompt = next((m["content"] for m in (messages or []) if m.get("role") == "user"), "")
+        raise _PromptCaptured(system_prompt, user_prompt)
+
+
+class _ReplayLLM:
+    # Swapped in for Memory.llm to replay a completion that was actually
+    # generated client-side (via SillyTavern's own connection, see the
+    # extension's flushBuffer()) back into the real pipeline, so Phases 3-8
+    # (embedding, hash dedup, insert, history, entity linking, message
+    # history) run completely unmodified -- never reimplemented by hand.
+    def __init__(self, response_text: str):
+        self._response_text = response_text
+
+    def generate_response(self, messages=None, response_format=None, **kwargs):
+        return self._response_text
+
+
+# Guards every swap of the shared `memory` instance's .llm attribute.
+# FastAPI runs sync route handlers in a thread pool, so two extraction
+# requests can genuinely be in progress at once (e.g. two flushes landing
+# close together) -- without this, one request's swapped-in shim could be
+# overwritten by another's mid-call, silently feeding one conversation's
+# extraction result to a different conversation's request. Held for the
+# entire duration of the call, not just the assignment, so a second request
+# waits its turn instead of racing.
+_extraction_lock = threading.Lock()
+
+
+@contextmanager
+def _with_llm(llm):
+    with _extraction_lock:
+        original = memory.llm
+        memory.llm = llm
+        try:
+            yield memory
+        finally:
+            memory.llm = original
+
+
+def _find_captured(exc: BaseException) -> Optional[_PromptCaptured]:
+    # mem0's own _add_to_vector_store wraps any exception from
+    # generate_response() in LLMError ("raise LLMError(...) from e") --
+    # walk __cause__ to find the sentinel regardless of that wrapping.
+    seen: Optional[BaseException] = exc
+    while seen is not None:
+        if isinstance(seen, _PromptCaptured):
+            return seen
+        seen = seen.__cause__
+    return None
+
+
+def _parse_json_tolerant(raw: str) -> Optional[dict]:
+    cleaned = remove_code_blocks(raw or "")
+    if not cleaned.strip():
+        return None
+    try:
+        return json.loads(cleaned, strict=False)
+    except json.JSONDecodeError:
+        try:
+            return json.loads(extract_json(cleaned), strict=False)
+        except json.JSONDecodeError:
+            return None
 
 
 app = FastAPI(title="mem0-service")
 
 
-class AddMemoryRequest(BaseModel):
+class ExtractionPromptRequest(BaseModel):
     messages: list[dict]
     user_id: str
     agent_id: Optional[str] = None
-    # SillyTavern's active model, passed through by the extension -- picks
-    # which of memories_by_model handles this call. Falls back to
-    # MEM0_LLM_MODEL if unset or unrecognized.
-    model: Optional[str] = None
-    # The world the active character is bound to (from its ST card's
-    # extensions.world field, reused rather than a separate mapping -- see
-    # CLAUDE.md). When set, classify_facts() also checks this exchange for
-    # world-relevant facts, alongside the existing shared-fact check.
+
+
+class ExtractionStoreRequest(BaseModel):
+    messages: list[dict]
+    user_id: str
+    agent_id: Optional[str] = None
+    raw_response: str
+
+
+class ClassificationPromptRequest(BaseModel):
+    character_memories: list[dict]  # [{"id": ..., "memory": ...}, ...]
     world: Optional[str] = None
 
 
-class ExtractionRawRequest(BaseModel):
+class ClassificationApplyRequest(BaseModel):
+    character_memories: list[dict]
+    world: Optional[str] = None
+    raw_response: str
+    user_id: str
+    agent_id: str
+
+
+class WorldInterviewPromptRequest(BaseModel):
     messages: list[dict]
-    model: Optional[str] = None
 
 
-class AddWorldLoreRequest(BaseModel):
-    content: str
-
-
-class WorldInterviewRequest(BaseModel):
-    messages: list[dict]
-    model: Optional[str] = None
+class WorldInterviewApplyRequest(BaseModel):
+    raw_response: str
 
 
 class UpdateMemoryRequest(BaseModel):
@@ -214,24 +240,19 @@ SHARED_AGENT_ID = "shared"
 # World lore isn't "about" any real user at all, so it gets its own user_id
 # sentinel rather than reusing the agent_id axis SHARED_AGENT_ID occupies --
 # a world name is just an agent_id value under this sentinel ("eldoria",
-# "kivotos", ...), so multiple worlds need no per-world schema. Same
-# collision precedent already accepted for SHARED_AGENT_ID: a real user
-# literally slugifying to "world" would collide, same acceptable edge case.
+# "kivotos", ...), so multiple worlds need no per-world schema.
 WORLD_USER_ID = "world"
 
 # Shared memories get tagged with the world that was resolved (persona-bound,
 # else character-bound -- see the ST extension's resolveWorld()) when they
-# were written, via mem0's metadata filtering (confirmed supported: filters
-# accept arbitrary metadata keys, not just user_id/agent_id/run_id -- see
-# Memory.search()'s docstring). NO_WORLD is a real sentinel value rather than
-# leaving the field unset, same reasoning as SHARED_AGENT_ID/WORLD_USER_ID
-# above: mem0's filter DSL has no "field is unset" operator, so a fact
-# learned with no world bound still needs a concrete value to be queryable
-# as "universal" (visible regardless of which world, if any, is relevant).
+# were written, via mem0's metadata filtering. NO_WORLD is a real sentinel
+# value rather than leaving the field unset -- mem0's filter DSL has no
+# "field is unset" operator, so a fact learned with no world bound still
+# needs a concrete value to be queryable as "universal".
 NO_WORLD = "none"
 
 
-def _slugify(value: str) -> str:
+def _slugify(value: str) -> Optional[str]:
     # Mirrors sillytavern/extensions/roleplay-memory/index.js's slugify() so
     # a world name matches however the ST extension derived it client-side.
     slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
@@ -241,9 +262,6 @@ def _slugify(value: str) -> str:
 def _scope(user_id: str, agent_id: Optional[str]) -> dict:
     # Every memory gets a real agent_id -- the SHARED_AGENT_ID sentinel when
     # none is given -- so "shared" can be queried as an equality filter.
-    # mem0's filter DSL has no "field is unset" operator, only equality/
-    # comparison on values that exist, so leaving agent_id unset would make
-    # a true shared-only query impossible.
     return {"user_id": user_id, "agent_id": agent_id or SHARED_AGENT_ID}
 
 
@@ -273,48 +291,6 @@ geography, history, factions, cultures, rules of magic or technology. Not about 
 user, and not about any one character's own personality or traits.
 """
 
-
-def classify_facts(mem: "Memory", character_memories: list[dict], world: Optional[str] = None) -> dict:
-    # Best-effort: this is a secondary enrichment step layered on top of the
-    # primary (always-succeeds) character-scoped write below, so any failure
-    # here is swallowed rather than breaking the add() call. Operates on the
-    # memory items Pass 1 (mem0's own extraction, in add_memory()) already
-    # produced, not the raw conversation -- a classification task over
-    # discrete, already-atomic facts, not a second independent extraction.
-    # Numbers in, numbers out: the model classifies by index rather than
-    # retyping fact text, so selected facts are looked up verbatim instead
-    # of trusting the model to reproduce them unchanged.
-    #
-    # character_memories items are {"id": ..., "memory": ...} -- the id is
-    # carried through (not just the text) so add_memory() can delete the
-    # character-scoped original once a fact has been moved elsewhere; a
-    # memory only ever lives in one scope at a time, never mirrored.
-    if not character_memories:
-        return {"shared_facts": [], "world_facts": []}
-    memory_list = "\n".join(f"{i + 1}. {m['memory']}" for i, m in enumerate(character_memories))
-    world_section = WORLD_SECTION_TEMPLATE.format(world=world) if world else ""
-    prompt = CLASSIFICATION_PROMPT_TEMPLATE.format(world_section=world_section)
-    try:
-        response = mem.llm.generate_response(
-            messages=[
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": memory_list},
-            ],
-            response_format={"type": "json_object"},
-        )
-        data = json.loads(response)
-        n = len(character_memories)
-
-        def _lookup(indices) -> list[dict]:
-            return [character_memories[i - 1] for i in indices if isinstance(i, int) and 1 <= i <= n]
-
-        shared_facts = _lookup(data.get("shared", []))
-        world_facts = _lookup(data.get("world", [])) if world else []
-        return {"shared_facts": shared_facts, "world_facts": world_facts}
-    except Exception:
-        return {"shared_facts": [], "world_facts": []}
-
-
 WORLD_INTERVIEW_PROMPT = """You are analyzing a world-building interview conversation between a user and an
 assistant helping them design a fictional setting.
 
@@ -332,16 +308,13 @@ If no world name was established yet, return {"worlds": []}.
 
 def _link_entities(mem: "Memory", memory_id: str, text: str, filters: dict) -> None:
     # mem0's own entity-store linking (named entities -> the memories that
-    # mention them, used for search-relevance boosting -- see CLAUDE.md's
-    # "entity store" notes) only runs as part of its infer=True extraction
-    # pipeline. The shared/world mirror writes below use infer=False (the
-    # text is already an atomic fact from Pass 1, re-extracting it would
-    # risk rewording it), which means they'd otherwise never get entity
-    # links at all. This replicates that step by calling mem0's own private
-    # entity-store helpers directly (not reimplementing their matching/
-    # embedding logic by hand) so it stays faithful to how mem0 itself
-    # links entities. Best-effort, same as the rest of this classification
-    # path -- any failure here doesn't affect the memory write itself.
+    # mention them, used for search-relevance boosting) only runs as part of
+    # its infer=True extraction pipeline. The shared/world moves below use
+    # infer=False (the text is already an atomic fact, re-extracting it
+    # would risk rewording it), which means they'd otherwise never get
+    # entity links at all. This replicates that step by calling mem0's own
+    # private entity-store helpers directly. Best-effort -- any failure here
+    # doesn't affect the memory write itself.
     try:
         entities = extract_entities_batch([text])[0]
     except Exception:
@@ -404,92 +377,100 @@ def health():
     return {"status": "ok"}
 
 
-@app.post("/memories")
-def add_memory(req: AddMemoryRequest):
-    mem = _pick_memory(req.model)
-    result = mem.add(req.messages, **_scope(req.user_id, req.agent_id))
-
-    # Only classify when this write was character-scoped -- a call already
-    # targeting the shared bucket has nothing further to route.
-    if req.agent_id:
-        character_memories = [
-            {"id": r["id"], "memory": r["memory"]} for r in result.get("results", []) if r.get("id") and r.get("memory")
-        ]
-        facts = classify_facts(mem, character_memories, world=req.world)
-
-        # A memory only ever lives in one scope at a time: once a fact is
-        # confirmed moved into shared or world scope below, its
-        # character-scoped original is deleted -- never mirrored/kept in
-        # both places. Collected here and deleted only after every move
-        # below has actually succeeded, so a failed move never loses data.
-        moved_ids: set[str] = set()
-
-        if facts["shared_facts"]:
-            shared_messages = [{"role": "user", "content": f["memory"]} for f in facts["shared_facts"]]
-            shared_filters = {"user_id": req.user_id, "agent_id": SHARED_AGENT_ID}
-            shared_result = mem.add(
-                shared_messages,
-                user_id=req.user_id,
-                agent_id=SHARED_AGENT_ID,
-                infer=False,
-                metadata={"world": req.world or NO_WORLD},
-            )
-            for r in shared_result.get("results", []):
-                if r.get("id") and r.get("memory"):
-                    _link_entities(mem, r["id"], r["memory"], shared_filters)
-            moved_ids.update(f["id"] for f in facts["shared_facts"])
-
-        if facts["world_facts"]:
-            world_messages = [{"role": "user", "content": f["memory"]} for f in facts["world_facts"]]
-            world_filters = {"user_id": WORLD_USER_ID, "agent_id": req.world}
-            world_result = mem.add(world_messages, user_id=WORLD_USER_ID, agent_id=req.world, infer=False)
-            for r in world_result.get("results", []):
-                if r.get("id") and r.get("memory"):
-                    _link_entities(mem, r["id"], r["memory"], world_filters)
-            moved_ids.update(f["id"] for f in facts["world_facts"])
-
-        for memory_id in moved_ids:
-            try:
-                mem.delete(memory_id)
-            except Exception:
-                pass
-
-    return result
+@app.post("/extraction/prompt")
+def extraction_prompt(req: ExtractionPromptRequest):
+    with _with_llm(_CapturePromptLLM()) as mem:
+        try:
+            mem.add(req.messages, **_scope(req.user_id, req.agent_id))
+        except Exception as e:
+            captured = _find_captured(e)
+            if captured is None:
+                raise HTTPException(status_code=500, detail=f"prompt capture failed: {e}") from e
+            return {"system_prompt": captured.system_prompt, "user_prompt": captured.user_prompt}
+    raise HTTPException(status_code=500, detail="extraction pipeline did not reach the LLM call")
 
 
-@app.post("/worlds/{world}/memories")
-def add_world_lore(world: str, req: AddWorldLoreRequest):
-    # Low-level write -- used by the one-time lorebook backfill script.
-    # infer defaults to True (mem0's normal extraction pipeline, same as
-    # the primary character-scoped add in add_memory()): ST World Info
-    # entries are often whole example-dialogue blocks, not atomic facts, so
-    # this runs them through fact extraction rather than embedding the raw
-    # blob verbatim -- keeps world memories the same shape (atomic facts)
-    # regardless of which of the three write paths produced them.
-    return memory.add([{"role": "user", "content": req.content}], user_id=WORLD_USER_ID, agent_id=world)
+@app.post("/extraction/store")
+def extraction_store(req: ExtractionStoreRequest):
+    with _with_llm(_ReplayLLM(req.raw_response)) as mem:
+        return mem.add(req.messages, **_scope(req.user_id, req.agent_id))
 
 
-@app.post("/worlds/interview")
-def world_interview(req: WorldInterviewRequest):
-    # The World Creator character (see CLAUDE.md) isn't bound to one fixed
-    # world the way a roleplay character is -- the interview conversation
-    # itself establishes what's being built, so this identifies the world
-    # name(s) from the transcript rather than being told one, unlike
-    # classify_facts() above.
-    mem = _pick_memory(req.model)
-    transcript = "\n".join(f"{m.get('role', 'user')}: {m.get('content', '')}" for m in req.messages)
-    try:
-        response = mem.llm.generate_response(
-            messages=[
-                {"role": "system", "content": WORLD_INTERVIEW_PROMPT},
-                {"role": "user", "content": transcript},
-            ],
-            response_format={"type": "json_object"},
+@app.post("/classification/prompt")
+def classification_prompt(req: ClassificationPromptRequest):
+    if not req.character_memories:
+        raise HTTPException(status_code=400, detail="character_memories must be non-empty")
+    memory_list = "\n".join(f"{i + 1}. {m['memory']}" for i, m in enumerate(req.character_memories))
+    world_section = WORLD_SECTION_TEMPLATE.format(world=req.world) if req.world else ""
+    system_prompt = CLASSIFICATION_PROMPT_TEMPLATE.format(world_section=world_section)
+    return {"system_prompt": system_prompt, "user_prompt": memory_list}
+
+
+@app.post("/classification/apply")
+def classification_apply(req: ClassificationApplyRequest):
+    # A memory only ever lives in one scope at a time: once a fact is
+    # confirmed moved into shared or world scope, its character-scoped
+    # original is deleted -- never mirrored/kept in both places. Collected
+    # here and deleted only after every move below has actually succeeded,
+    # so a failed move never loses data.
+    data = _parse_json_tolerant(req.raw_response) or {}
+    n = len(req.character_memories)
+
+    def _lookup(indices) -> list[dict]:
+        return [req.character_memories[i - 1] for i in indices if isinstance(i, int) and 1 <= i <= n]
+
+    shared_facts = _lookup(data.get("shared", []))
+    world_facts = _lookup(data.get("world", [])) if req.world else []
+
+    moved_ids: set[str] = set()
+
+    if shared_facts:
+        shared_messages = [{"role": "user", "content": f["memory"]} for f in shared_facts]
+        shared_filters = {"user_id": req.user_id, "agent_id": SHARED_AGENT_ID}
+        shared_result = memory.add(
+            shared_messages,
+            user_id=req.user_id,
+            agent_id=SHARED_AGENT_ID,
+            infer=False,
+            metadata={"world": req.world or NO_WORLD},
         )
-        data = json.loads(response)
-        worlds = data.get("worlds", [])
-    except Exception:
-        worlds = []
+        for r in shared_result.get("results", []):
+            if r.get("id") and r.get("memory"):
+                _link_entities(memory, r["id"], r["memory"], shared_filters)
+        moved_ids.update(f["id"] for f in shared_facts)
+
+    if world_facts:
+        world_messages = [{"role": "user", "content": f["memory"]} for f in world_facts]
+        world_filters = {"user_id": WORLD_USER_ID, "agent_id": req.world}
+        world_result = memory.add(world_messages, user_id=WORLD_USER_ID, agent_id=req.world, infer=False)
+        for r in world_result.get("results", []):
+            if r.get("id") and r.get("memory"):
+                _link_entities(memory, r["id"], r["memory"], world_filters)
+        moved_ids.update(f["id"] for f in world_facts)
+
+    for memory_id in moved_ids:
+        try:
+            memory.delete(memory_id)
+        except Exception:
+            pass
+
+    return {"shared_count": len(shared_facts), "world_count": len(world_facts)}
+
+
+@app.post("/worlds/interview/prompt")
+def worlds_interview_prompt(req: WorldInterviewPromptRequest):
+    # The World Creator character isn't bound to one fixed world the way a
+    # roleplay character is -- the interview conversation itself establishes
+    # what's being built, so this identifies the world name(s) from the
+    # transcript rather than being told one, unlike extraction_prompt().
+    transcript = "\n".join(f"{m.get('role', 'user')}: {m.get('content', '')}" for m in req.messages)
+    return {"system_prompt": WORLD_INTERVIEW_PROMPT, "user_prompt": transcript}
+
+
+@app.post("/worlds/interview/apply")
+def worlds_interview_apply(req: WorldInterviewApplyRequest):
+    data = _parse_json_tolerant(req.raw_response) or {}
+    worlds = data.get("worlds", [])
 
     written = []
     for entry in worlds:
@@ -506,52 +487,6 @@ def world_interview(req: WorldInterviewRequest):
         written.append({"world": slug, "facts": fact_texts})
 
     return {"written": written}
-
-
-@app.post("/debug/extraction-raw")
-def extraction_raw(req: ExtractionRawRequest):
-    # Mirrors mem0's own extraction call (Memory._add_to_vector_store) so this
-    # exercises the same prompt/parse path a real /memories call takes.
-    # Surfaced separately because mem0 catches a JSON parse failure here and
-    # silently turns it into an empty result -- identical to "the model found
-    # nothing worth remembering". This endpoint reports the parse failure
-    # instead of swallowing it.
-    mem = _pick_memory(req.model)
-    parsed_messages = parse_messages(req.messages)
-    user_prompt = generate_additive_extraction_prompt(new_messages=parsed_messages)
-
-    raw_response = mem.llm.generate_response(
-        messages=[
-            {"role": "system", "content": ADDITIVE_EXTRACTION_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        response_format={"type": "json_object"},
-    )
-
-    cleaned = remove_code_blocks(raw_response)
-    result = {"raw_response": raw_response, "cleaned_response": cleaned}
-
-    if not cleaned or not cleaned.strip():
-        result.update(valid_json=False, used_fallback=False, error="empty response", memory_count=0)
-        return result
-
-    try:
-        parsed = json.loads(cleaned, strict=False)
-        result.update(valid_json=True, used_fallback=False)
-    except json.JSONDecodeError:
-        try:
-            parsed = json.loads(extract_json(cleaned), strict=False)
-            result.update(valid_json=True, used_fallback=True)
-        except json.JSONDecodeError as e2:
-            result.update(valid_json=False, used_fallback=True, error=str(e2), memory_count=0)
-            return result
-
-    memory_list = parsed.get("memory") if isinstance(parsed, dict) else None
-    result.update(
-        has_memory_key=isinstance(memory_list, list),
-        memory_count=len(memory_list) if isinstance(memory_list, list) else 0,
-    )
-    return result
 
 
 def _distinct_field_values(field: str, filter_key: Optional[str] = None, filter_value: Optional[str] = None) -> list[str]:

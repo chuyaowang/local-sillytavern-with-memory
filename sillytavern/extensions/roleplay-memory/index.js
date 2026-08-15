@@ -3,12 +3,25 @@ function slugify(value) {
     return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || null;
 }
 
+function humanize(slug) {
+    if (!slug) return slug;
+    return slug.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+}
+
+// Mirrors mem0-service/main.py's WORLD_USER_ID sentinel -- world lore isn't
+// "about" any real user, so it lives under this fixed user_id instead.
+const WORLD_USER_ID = 'world';
+
 function getIds() {
     const context = SillyTavern.getContext();
     const character = context.characters?.[context.characterId];
     return {
         userId: slugify(context.name1) || 'default-user',
         agentId: slugify(character?.name),
+        // Kept alongside the slugs, purely for toast text -- the slugs are
+        // what the API actually uses.
+        personaName: context.name1 || 'You',
+        characterName: character?.name || null,
     };
 }
 
@@ -48,24 +61,6 @@ function isWorldCreatorActive() {
     const context = SillyTavern.getContext();
     const character = context.characters?.[context.characterId];
     return slugify(character?.name) === WORLD_CREATOR_NAME;
-}
-
-// Roleplay and memory extraction are supposed to always share one model
-// (see CLAUDE.md). Sending this with every flush is what makes that
-// automatic instead of a manually-maintained convention -- mem0-service
-// picks the matching model itself (see mem0-service/main.py's
-// memories_by_model) rather than trusting a fixed config value that could
-// drift from whatever's actually selected here.
-// context.textCompletionSettings / .mainApi verified directly against
-// SillyTavern's own source (public/scripts/st-context.js's getContext()),
-// same as the extension_prompt_types constants below -- not part of the
-// documented extension API.
-function getActiveModel() {
-    const context = SillyTavern.getContext();
-    if (context.mainApi === 'textgenerationwebui' && context.textCompletionSettings?.type === 'llamacpp') {
-        return context.textCompletionSettings.llamacpp_model || null;
-    }
-    return null;
 }
 
 function getLastUserMessage(chat) {
@@ -177,6 +172,22 @@ globalThis.roleplayMemoryInterceptor = async function (chat, contextSize, abort,
 //   - the conversation goes idle for IDLE_MS with nothing flushed yet
 //   - the chat/character changes (flush immediately so buffered messages
 //     don't get misattributed to whatever character comes next)
+//
+// Every step that needs an LLM completion (extraction, classification, the
+// World Weaver interview) is a build-prompt / apply-result pair against the
+// plugin: mem0-service builds the prompt or parses+stores a result, but the
+// actual generation happens here, via SillyTavern's own generateRaw() --
+// whatever backend/model is actually connected, not a hardcoded client
+// inside mem0-service. jsonSchema is deliberately not used: confirmed by
+// reading SillyTavern's own source that its jsonSchema extraction path
+// (extractJsonFromData in public/script.js) only has a case for
+// mainApi 'openai' (i.e. every chat-completion source) -- for
+// 'textgenerationwebui' (llama.cpp and every other Text Completion
+// backend, this project's own default) it silently returns "{}", discarding
+// the real output. Plain generation + mem0-service's own tolerant
+// JSON-with-fallback parsing works uniformly across every backend instead.
+// trimNames is turned off since a JSON response never has a legitimate
+// "CharacterName: " prefix worth stripping.
 
 const TOKEN_THRESHOLD = 800; // approximate (chars / 4) -- not exact tokenization, just a batching heuristic
 const IDLE_MS = 2 * 60 * 1000; // flush after 2 minutes of no new exchanges
@@ -195,6 +206,31 @@ function containsTriggerPhrase(text) {
     return TRIGGER_PHRASES.some((phrase) => lower.includes(phrase));
 }
 
+async function csrfHeaders() {
+    // POST requests need an X-CSRF-Token header or ST's CSRF middleware
+    // rejects them with 403, even with a valid session/basic-auth.
+    const { token } = await (await fetch('/csrf-token')).json();
+    return { 'Content-Type': 'application/json', 'X-CSRF-Token': token };
+}
+
+async function postPlugin(path, body) {
+    const headers = await csrfHeaders();
+    const response = await fetch(`/api/plugins/roleplay-memory${path}`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+        throw new Error(`${path} failed with status ${response.status}`);
+    }
+    return response.json();
+}
+
+async function generateFor(systemPrompt, userPrompt) {
+    const context = SillyTavern.getContext();
+    return context.generateRaw({ prompt: userPrompt, systemPrompt, trimNames: false });
+}
+
 async function flushBuffer() {
     if (idleTimer) {
         clearTimeout(idleTimer);
@@ -206,37 +242,66 @@ async function flushBuffer() {
     buffer = [];
     bufferCharCount = 0;
 
-    const { userId, agentId } = getIds();
+    const { userId, agentId, personaName, characterName } = getIds();
     const world = resolveWorld();
-    const model = getActiveModel();
     const isWorldCreator = isWorldCreatorActive();
 
     try {
-        // POST requests need an X-CSRF-Token header or ST's CSRF middleware
-        // rejects them with 403, even with a valid session/basic-auth.
-        const { token } = await (await fetch('/csrf-token')).json();
         if (isWorldCreator) {
             // The World Creator interview isn't bound to one fixed world the
-            // way a roleplay character is -- the plugin/mem0-service side
-            // identifies world name(s) from the transcript itself, and this
-            // writes world-scoped memory only (no shared/character write).
-            await fetch('/api/plugins/roleplay-memory/interview', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token },
-                body: JSON.stringify({ messages, model: model || undefined }),
-            });
-        } else {
-            await fetch('/api/plugins/roleplay-memory/add', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token },
-                body: JSON.stringify({
-                    messages,
-                    user_id: userId,
-                    agent_id: agentId || undefined,
-                    model: model || undefined,
+            // way a roleplay character is -- mem0-service identifies world
+            // name(s) from the transcript itself, and this writes
+            // world-scoped memory only (no shared/character write).
+            const { system_prompt, user_prompt } = await postPlugin('/worlds/interview/prompt', { messages });
+            const rawResponse = await generateFor(system_prompt, user_prompt);
+            const { written } = await postPlugin('/worlds/interview/apply', { raw_response: rawResponse });
+            for (const entry of written || []) {
+                if (entry.facts && entry.facts.length > 0) {
+                    toastr.success(`World lore updated for ${humanize(entry.world)}`, 'Roleplay Memory');
+                }
+            }
+            return;
+        }
+
+        const extractionPrompt = await postPlugin('/extraction/prompt', {
+            messages, user_id: userId, agent_id: agentId || undefined,
+        });
+        const extractionRaw = await generateFor(extractionPrompt.system_prompt, extractionPrompt.user_prompt);
+        const stored = await postPlugin('/extraction/store', {
+            messages, user_id: userId, agent_id: agentId || undefined, raw_response: extractionRaw,
+        });
+        const results = stored.results || [];
+
+        if (results.length > 0) {
+            const label = agentId && characterName ? `${personaName} & ${characterName}` : personaName;
+            toastr.success(`Memory updated for ${label}`, 'Roleplay Memory');
+        }
+
+        // Only classify when this write was character-scoped -- a call
+        // already targeting the shared bucket has nothing further to route.
+        if (agentId && results.length > 0) {
+            const characterMemories = results
+                .filter((r) => r.id && r.memory)
+                .map((r) => ({ id: r.id, memory: r.memory }));
+            if (characterMemories.length > 0) {
+                const classifyPrompt = await postPlugin('/classification/prompt', {
+                    character_memories: characterMemories, world: world || undefined,
+                });
+                const classifyRaw = await generateFor(classifyPrompt.system_prompt, classifyPrompt.user_prompt);
+                const applied = await postPlugin('/classification/apply', {
+                    character_memories: characterMemories,
                     world: world || undefined,
-                }),
-            });
+                    raw_response: classifyRaw,
+                    user_id: userId,
+                    agent_id: agentId,
+                });
+                if (applied.shared_count > 0) {
+                    toastr.success(`Shared memory updated for ${personaName}`, 'Roleplay Memory');
+                }
+                if (applied.world_count > 0) {
+                    toastr.success(`World lore updated for ${humanize(world)}`, 'Roleplay Memory');
+                }
+            }
         }
     } catch (err) {
         console.error('[roleplay-memory] flush failed:', err);
@@ -276,8 +341,77 @@ async function onMessageReceived() {
     }
 }
 
+// --- Lorebook migration: a button in ST's own World Info editor ---
+//
+// Replaces the old standalone bash script -- reads an existing World Info
+// file's entries the same way that script did, but runs each one through
+// the same extraction/prompt + generateRaw() + extraction/store cycle
+// ordinary roleplay uses (just scoped to the world instead of a
+// user/character pair), so it's backend-agnostic too, and gives migration a
+// real UI instead of a script needing an exported file path.
+
+async function migrateWorldToMemory() {
+    const context = SillyTavern.getContext();
+    const worldName = String($('#world_editor_select').find(':selected').text() || '').trim();
+    if (!worldName) {
+        toastr.warning('Select a world in the editor first.', 'Roleplay Memory');
+        return;
+    }
+    const slug = slugify(worldName);
+    if (!slug) return;
+
+    const data = await context.loadWorldInfo(worldName);
+    const entries = data?.entries ? Object.values(data.entries) : [];
+    const contents = entries.map((e) => e?.content).filter((c) => c && String(c).trim());
+    if (contents.length === 0) {
+        toastr.info(`No entries with content found in "${worldName}".`, 'Roleplay Memory');
+        return;
+    }
+
+    let migrated = 0;
+    for (const content of contents) {
+        migrated += 1;
+        toastr.info(`Migrating "${worldName}": entry ${migrated} of ${contents.length}`, 'Roleplay Memory');
+        try {
+            const { system_prompt, user_prompt } = await postPlugin('/extraction/prompt', {
+                messages: [{ role: 'user', content }],
+                user_id: WORLD_USER_ID,
+                agent_id: slug,
+            });
+            const rawResponse = await generateFor(system_prompt, user_prompt);
+            await postPlugin('/extraction/store', {
+                messages: [{ role: 'user', content }],
+                user_id: WORLD_USER_ID,
+                agent_id: slug,
+                raw_response: rawResponse,
+            });
+        } catch (err) {
+            console.error('[roleplay-memory] migration entry failed:', err);
+        }
+    }
+
+    toastr.success(`World lore updated for ${humanize(slug)}: ${migrated} entries migrated`, 'Roleplay Memory');
+
+    const confirmed = await context.Popup.show.confirm(
+        'Migrate to Memory',
+        `"${worldName}" has been migrated. Clear its ${contents.length} World Info entries now, so SillyTavern's own keyword matching doesn't inject the same lore a second time?`,
+    );
+    if (confirmed === context.POPUP_RESULT.AFFIRMATIVE) {
+        await context.saveWorldInfo(worldName, { ...data, entries: {} }, true);
+        toastr.info(`Cleared entries for "${worldName}".`, 'Roleplay Memory');
+    }
+}
+
+function injectMigrateButton() {
+    if ($('#roleplay_memory_migrate_button').length > 0) return;
+    const button = $('<div id="roleplay_memory_migrate_button" class="menu_button fa-solid fa-brain" title="Migrate this World Info to memory" data-i18n="[title]Migrate this World Info to memory"></div>');
+    button.on('click', () => migrateWorldToMemory());
+    $('#world_popup_delete').after(button);
+}
+
 jQuery(async () => {
     const { eventSource, event_types } = SillyTavern.getContext();
     eventSource.on(event_types.MESSAGE_RECEIVED, onMessageReceived);
     eventSource.on(event_types.CHAT_CHANGED, flushBuffer);
+    injectMigrateButton();
 });

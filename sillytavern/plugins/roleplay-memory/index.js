@@ -19,9 +19,16 @@ async function init(router) {
         }
     });
 
-    router.post('/add', async (req, res) => {
+    // Every LLM-needing step is a build-prompt / apply-result pair: mem0
+    // builds the prompt (or parses+stores a result), but the actual
+    // generation happens client-side via the extension's generateRaw()
+    // call, using whatever backend/model SillyTavern is actually connected
+    // to -- not a hardcoded llama.cpp client inside mem0-service. This
+    // plugin only relays each leg to mem0-service, same thin
+    // fetch-and-relay pattern as /context above.
+    const relay = (path) => async (req, res) => {
         try {
-            const response = await fetch(`${MEM0_URL}/memories`, {
+            const response = await fetch(`${MEM0_URL}${path}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(req.body),
@@ -29,25 +36,17 @@ async function init(router) {
             const data = await response.json();
             res.status(response.status).json(data);
         } catch (err) {
-            console.error('[roleplay-memory] add request failed:', err);
+            console.error(`[roleplay-memory] ${path} request failed:`, err);
             res.status(502).json({ error: 'mem0 service unreachable' });
         }
-    });
+    };
 
-    router.post('/interview', async (req, res) => {
-        try {
-            const response = await fetch(`${MEM0_URL}/worlds/interview`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(req.body),
-            });
-            const data = await response.json();
-            res.status(response.status).json(data);
-        } catch (err) {
-            console.error('[roleplay-memory] interview request failed:', err);
-            res.status(502).json({ error: 'mem0 service unreachable' });
-        }
-    });
+    router.post('/extraction/prompt', relay('/extraction/prompt'));
+    router.post('/extraction/store', relay('/extraction/store'));
+    router.post('/classification/prompt', relay('/classification/prompt'));
+    router.post('/classification/apply', relay('/classification/apply'));
+    router.post('/worlds/interview/prompt', relay('/worlds/interview/prompt'));
+    router.post('/worlds/interview/apply', relay('/worlds/interview/apply'));
 }
 
 async function exit() {}
