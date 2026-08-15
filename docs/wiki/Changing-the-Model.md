@@ -1,0 +1,61 @@
+# Changing the Model
+
+One model serves both roleplay generation and memory extraction (see
+[Memory System](Memory-System.md) for why that's enforced automatically rather than
+by convention) — swapping it is a config change plus a test run, not a code change.
+
+## Steps
+
+1. **Download a GGUF.** Grab one from Hugging Face or wherever you like. Place it in
+   `models/`. Note the actual VRAM used is **less than** the size of the GGUF file —
+   not everything needs to be loaded to the GPU (e.g. the token embedding table
+   typically stays on CPU).
+2. **Add it to `llama-cpp/models-preset.ini`.** Copy an existing `[section]`, give it
+   a new name, and point `model =` at your filename. Keep `ctx-size` at 16384 or
+   higher — mem0's extraction prompt alone is around 8,000 tokens, and a smaller
+   context window silently truncates it and breaks extraction. If VRAM is tight for
+   this quant, see the `gemma-q8` section's comments for the `--fit`/`n-gpu-layers`
+   tradeoff.
+3. **Restart llama.cpp** so it picks up the new preset:
+
+   ```bash
+   docker compose restart llama-cpp
+   ```
+
+4. **Test it before committing to it:**
+
+   ```bash
+   ./scripts/test-model-llama-cpp.sh <new-section-name>
+   ```
+
+   Runs three checks against a throwaway setup, not your real containers or data:
+   - **Text generation** — a real completion request against the router, confirming
+     the model loads and produces output at all.
+   - **VRAM footprint** — measured via a container restart, so it reflects actual
+     resident usage rather than the GGUF's file size.
+   - **mem0 extraction** — spins up throwaway `qdrant-test`/`mem0-test` containers
+     pointed at the real `llama-cpp` service (no separate embedder needed, router
+     mode already serves both) and runs a real extraction request through them, since
+     a model that generates fine can still fail mem0's structured JSON extraction —
+     this project has hit that before with roleplay-tuned "abliterated" checkpoints
+     that were unreliable at extraction specifically, regardless of quantization.
+
+   Pick a different model if anything fails.
+5. **Point SillyTavern at it.** API Connections, re-pick the new model from the
+   dropdown (same place as [Running the Stack](Running-the-Stack.md) step 6). mem0
+   follows automatically — it reads whichever model SillyTavern is actually using on
+   every request, so there's no separate mem0 config to update.
+
+## Models checked so far
+
+Results from running `scripts/test-model-llama-cpp.sh` against each model, for
+reference:
+
+| Model | Text generation | VRAM footprint (actual) | Extraction JSON syntax | Extraction pipeline |
+| --- | --- | --- | --- | --- |
+| [Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q4_K_P](https://huggingface.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive/blob/main/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf) | Pass | ~3.3 GB | Pass | Pass |
+| [Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q8_K_P](https://huggingface.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive/blob/main/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q8_K_P.gguf) | Pass | ~4.7-5.7 GB | Pass | Pass |
+
+Q8 fits, but with a real speed tradeoff when the embedder also needs VRAM — see
+[docs/LLAMA_CPP_BENCHMARK.md](https://github.com/chuyaowang/local-sillytavern-with-memory/blob/main/docs/LLAMA_CPP_BENCHMARK.md)
+for the full story. Q4 is the safer everyday default.
