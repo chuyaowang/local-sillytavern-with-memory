@@ -17,10 +17,26 @@ function getIds() {
 // separate mapping -- confirmed this session that ST never rewrites the
 // bound world file on its own, so it's safe to treat this field as pure
 // metadata once that file's entries are emptied out. See CLAUDE.md.
-function getBoundWorld() {
+function getCharacterBoundWorld() {
     const context = SillyTavern.getContext();
     const character = context.characters?.[context.characterId];
     return slugify(character?.data?.extensions?.world);
+}
+
+// ST also lets a *persona* (not just a character) bind to a lorebook --
+// power_user.persona_description_lorebook, set via the persona panel's own
+// lorebook picker. Confirmed exposed on getContext() as
+// context.powerUserSettings (same live object, not a snapshot -- see
+// st-context.js's getContext(), "powerUserSettings: power_user").
+function getPersonaBoundWorld() {
+    const context = SillyTavern.getContext();
+    return slugify(context.powerUserSettings?.persona_description_lorebook);
+}
+
+// Persona binding takes priority over the active character's -- if neither
+// is bound, the exchange isn't tied to any world at all.
+function resolveWorld() {
+    return getPersonaBoundWorld() || getCharacterBoundWorld();
 }
 
 // The World Creator is a plain SillyTavern character (not a special API
@@ -85,12 +101,30 @@ const EXTENSION_PROMPT_DEPTH = 0;
 globalThis.roleplayMemoryInterceptor = async function (chat, contextSize, abort, type) {
     if (type === 'quiet') return;
 
+    const context = SillyTavern.getContext();
+
+    if (isWorldCreatorActive()) {
+        // World Weaver's job is building a world from a clean slate --
+        // injecting memories (especially lore from an unrelated existing
+        // world, which could easily be what's bound if the persona itself
+        // is bound to one) would contaminate it. No memory context at all
+        // for this chat. Explicitly clear the slot rather than just
+        // skipping the call -- it isn't per-character, so whatever the
+        // last non-World-Weaver character injected would otherwise still
+        // be sitting there after switching chats.
+        if (typeof context.setExtensionPrompt === 'function') {
+            context.setExtensionPrompt(
+                EXTENSION_PROMPT_KEY, '', EXTENSION_PROMPT_TYPE_IN_PROMPT, EXTENSION_PROMPT_DEPTH, false, EXTENSION_PROMPT_ROLE_SYSTEM,
+            );
+        }
+        return;
+    }
+
     const query = getLastUserMessage(chat);
     if (!query) return;
 
     const { userId, agentId } = getIds();
-    const world = getBoundWorld();
-    const context = SillyTavern.getContext();
+    const world = resolveWorld();
 
     try {
         const params = new URLSearchParams({ user_id: userId, query });
@@ -173,7 +207,7 @@ async function flushBuffer() {
     bufferCharCount = 0;
 
     const { userId, agentId } = getIds();
-    const world = getBoundWorld();
+    const world = resolveWorld();
     const model = getActiveModel();
     const isWorldCreator = isWorldCreatorActive();
 
