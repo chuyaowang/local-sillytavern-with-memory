@@ -226,9 +226,21 @@ async function postPlugin(path, body) {
     return response.json();
 }
 
+// Generous, explicit response length -- generateRaw() otherwise falls back
+// to whatever's configured for ordinary roleplay replies, which can be far
+// too small here. The extraction/classification system prompts are large
+// (~8,000 tokens), and at least one model this project targets (Gemma 4 E4B
+// HauhauCS, see CLAUDE.md) emits a hidden "thinking" block before its real
+// reply -- under a tight budget it can burn the whole thing on thinking and
+// return empty visible content, which generateRaw() then treats as a hard
+// failure ("No message generated") rather than an empty string.
+const GENERATION_RESPONSE_LENGTH = 2048;
+
 async function generateFor(systemPrompt, userPrompt) {
     const context = SillyTavern.getContext();
-    return context.generateRaw({ prompt: userPrompt, systemPrompt, trimNames: false });
+    return context.generateRaw({
+        prompt: userPrompt, systemPrompt, trimNames: false, responseLength: GENERATION_RESPONSE_LENGTH,
+    });
 }
 
 async function flushBuffer() {
