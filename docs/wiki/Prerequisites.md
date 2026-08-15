@@ -1,27 +1,16 @@
 # Prerequisites
 
-Nothing on this page is specific to this project — it's the one-time host setup
-needed before any of it will run. See [Running the Stack](Running-the-Stack.md) for
-the project-specific steps once these are done.
+This page is the one-time host setup needed before any of it will run — nothing here is specific to this project. See [Running the Stack](Running-the-Stack.md) for the project-specific steps once these are done.
 
 ## What you need
 
 - A Linux computer with an NVIDIA GPU.
-- [Tailscale](https://tailscale.com) set up on it, and on whatever device you want to
-  reach it from. Not necessary if you only want to access it locally.
-- Native Docker Engine — **not** Docker Desktop. Docker Desktop for Linux runs
-  everything inside an internal VM, which adds an indirection layer GPU passthrough
-  doesn't need.
+- [Tailscale](https://tailscale.com) set up on it, and on whatever device you want to reach it from. Not necessary if you only want to access it locally.
+- Native Docker Engine, installed via apt below. Docker Desktop for Linux runs everything inside an internal VM, which adds an indirection layer GPU passthrough doesn't need.
 
-The commands below target Ubuntu 22.04. Ask an LLM to adapt them for your own
-distribution.
+The commands below target Ubuntu 22.04. Ask an LLM to adapt them for your own distribution.
 
-Windows isn't directly supported, but should work through WSL2 — install Docker
-Engine (not Docker Desktop) inside a WSL2 Ubuntu distro, keep the repo on the WSL2
-filesystem rather than `/mnt/c/...`, and set up GPU passthrough via
-[NVIDIA's CUDA on WSL support](https://docs.nvidia.com/cuda/wsl-user-guide/index.html)
-before installing the NVIDIA Container Toolkit below. Untested by this project —
-expect to adapt some steps.
+Windows isn't directly supported, but should work through WSL2: install Docker Engine inside a WSL2 Ubuntu distro, keep the repo on the WSL2 filesystem (`/mnt/c/...` paths won't work), and set up GPU passthrough via [NVIDIA's CUDA on WSL support](https://docs.nvidia.com/cuda/wsl-user-guide/index.html) before installing the NVIDIA Container Toolkit below. This project hasn't tested it — expect to adapt some steps.
 
 ## Install Docker Engine
 
@@ -59,12 +48,8 @@ sudo systemctl restart docker
 docker run --rm --gpus all nvidia/cuda:12.6.0-base-ubuntu22.04 nvidia-smi
 ```
 
-This should print your GPU info from inside the container. If it doesn't, fix that
-before going any further — nothing downstream will work without it.
+This should print your GPU info from inside the container. Fix that before going any further if it doesn't — nothing downstream will work without it.
 
 ## Set up Tailscale
 
-Install and log in on both the host machine and whatever device (phone, laptop) you
-want to reach SillyTavern from — [tailscale.com/download](https://tailscale.com/download).
-`tailscale status` on either device shows you the Tailscale IPs you'll need in
-[Running the Stack](Running-the-Stack.md).
+Install and log in on both the host machine and whatever device (phone, laptop) you want to reach SillyTavern from — [tailscale.com/download](https://tailscale.com/download). `tailscale status` on either device shows you the Tailscale IPs you'll need in [Running the Stack](Running-the-Stack.md).
