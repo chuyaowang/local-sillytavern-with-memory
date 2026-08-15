@@ -280,7 +280,7 @@ async function flushBuffer() {
         });
         const extractionRaw = await generateFor(extractionPrompt.system_prompt, extractionPrompt.user_prompt);
         const stored = await postPlugin('/extraction/store', {
-            messages, user_id: userId, agent_id: agentId || undefined, raw_response: extractionRaw,
+            messages, user_id: userId, agent_id: agentId || undefined, raw_response: extractionRaw, world: world || undefined,
         });
         const results = stored.results || [];
 

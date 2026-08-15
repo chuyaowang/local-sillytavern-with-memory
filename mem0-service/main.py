@@ -200,6 +200,12 @@ class ExtractionStoreRequest(BaseModel):
     user_id: str
     agent_id: Optional[str] = None
     raw_response: str
+    # The world that was resolved (persona-bound, else character-bound) when
+    # this exchange happened -- same value the extension already sends to
+    # classification. Tagging the primary write with it (not just the
+    # shared/world moves classification produces) lets the admin UI show
+    # which world was active for a character-scoped memory too.
+    world: Optional[str] = None
 
 
 class ClassificationPromptRequest(BaseModel):
@@ -393,7 +399,9 @@ def extraction_prompt(req: ExtractionPromptRequest):
 @app.post("/extraction/store")
 def extraction_store(req: ExtractionStoreRequest):
     with _with_llm(_ReplayLLM(req.raw_response)) as mem:
-        return mem.add(req.messages, **_scope(req.user_id, req.agent_id))
+        return mem.add(
+            req.messages, **_scope(req.user_id, req.agent_id), metadata={"world": req.world or NO_WORLD},
+        )
 
 
 @app.post("/classification/prompt")
