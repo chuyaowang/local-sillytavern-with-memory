@@ -43,6 +43,18 @@ Whichever World Info file gets bound this way should stay empty of its own entri
 - **Passively**, during ordinary roleplay: facts about the world get picked out alongside the usual shared/character memory extraction (see "Sorting a memory" below), for whichever world is currently bound. This is how Eldoria's lore built up as Nova talked to Seraphina.
 - **Actively**, with a dedicated interviewer character: import `sillytavern/character-cards/world-weaver.json` into SillyTavern, keeping the name exactly **World Weaver**, and talk to it like any other character. It asks about a world one question at a time and writes straight into that world's lore. This is how Camelot's lore could be built from scratch before Amber ever starts roleplaying with Arthuria. Because it writes into the same store the passive path reads from, a lorebook built this way is available immediately in a fresh roleplay session bound to that world. It never pulls in memory context for its own replies, so building a new world stays a clean slate, and every exchange with it is saved right away.
 
+### Migrating an existing lorebook
+
+A world that already has lore in SillyTavern's native World Info format does not need to be re-typed through World Weaver. A backfill script reads an existing World Info JSON file's entries and runs each one through the same extraction step as ordinary roleplay, writing the results straight into that world's lore:
+
+```bash
+./scripts/migrate-lorebook-to-mem0.sh <world-json-file> <world-name>
+```
+
+`<world-json-file>` is the path to the World Info JSON, for example `sillytavern/data/default-user/worlds/Eldoria.json`. `<world-name>` is the world's name, for example `Eldoria` — pass the plain name and let the script lowercase and format it to match how the extension and memory service already refer to that world. An optional third argument points the script at prod's memory service instead of dev's.
+
+Run this once per world, before emptying that World Info file's entries (see "Binding a world" above). It is a one-time backfill and does not need to be repeated after every change.
+
 ### A known limitation
 
 Shared memory tagged with a world only resurfaces for that same world, so a personal detail like "Nova's mount is the Aetherian Stride" (learned while talking to Seraphina in Eldoria) does not leak into a conversation with Arthuria in Camelot. The tradeoff: a whole exchange shares one world tag, so a genuinely universal fact, say Nova's real name, learned while talking to Seraphina also stops surfacing later when Nova talks to Arthuria. This is a known, accepted limitation.
@@ -59,6 +71,17 @@ Shared memory tagged with a world only resurfaces for that same world, so a pers
 A conversation does not become a memory verbatim. Say Nova tells Seraphina she works as a veterinarian, and mentions that Eldoria's forest was corrupted by the Shadowfangs. mem0 reads that exchange and produces self-contained, atomic factual statements from it: "Nova works as a veterinarian" and "Eldoria's forest was corrupted by the Shadowfangs," covering both what Nova said and what Seraphina said. This decides what is worth remembering at all.
 
 The extraction step relies on a large prompt of its own, around 8,000 tokens, and any model doing extraction needs enough context space to hold it comfortably (16384 or higher, see [Changing the Model](Changing-the-Model.md)). A smaller context window silently truncates that prompt, and extraction quietly breaks.
+
+## When extraction happens
+
+Exchanges are not sent off one at a time. SillyTavern's extension collects them in a buffer and sends the whole batch together as soon as any of these happens, whichever comes first:
+
+- The buffer's estimated size reaches about 800 tokens, estimated from character count rather than exact tokenization.
+- Two minutes pass with no new exchange added to the buffer.
+- The user says something like "remember this" or "memorize that," flushing right away.
+- The chat or character changes, flushing right away so buffered exchanges do not end up attributed to whatever character comes next.
+
+World Weaver is the one exception: every exchange with it flushes immediately instead of batching, since each interview answer is low-volume and deliberate, and waiting for a token or idle threshold risks losing one if the browser tab closes first.
 
 ## Sorting a memory into shared or world lore
 
