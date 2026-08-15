@@ -6,7 +6,7 @@ The examples below use two people, Nova and Amber, two characters, Seraphina and
 
 ## The three memory scopes
 
-Every memory belongs to one of three scopes: who it is about, and which category it is filed under.
+Every memory belongs to one of three scopes: character, shared, or world lore.
 
 | Scope | Example fact | Belongs to | Visible to |
 | --- | --- | --- | --- |
@@ -14,48 +14,31 @@ Every memory belongs to one of three scopes: who it is about, and which category
 | **Shared** | "Nova works as a veterinarian" | Nova | every character Nova talks to (optionally limited to one world, see below) |
 | **World lore** | "Eldoria's forest was corrupted by the Shadowfangs" | no one in particular | anyone talking about Eldoria, Nova or Amber alike |
 
-```mermaid
-flowchart TD
-    char(("Character memory"))
-    shared(("Shared memory"))
-    world(("World lore"))
+![Which scopes are visible in each conversation](diagrams/memory-system-1.svg)
 
-    nova["Nova"]
-    seraphina["Seraphina"]
-    amber["Amber"]
-    arthuria["Arthuria"]
+Nova, in a conversation with Seraphina in the Eldoria world, has access to memories about herself in Eldoria, her interaction with Seraphina in Eldoria, and the world Eldoria. Similarly, Amber's interactions with Arthuria are memorized for the Camelot world.
 
-    char -->|"Nova's history with Seraphina"| nova
-    char --> seraphina
-    char -->|"Amber's history with Arthuria"| amber
-    char --> arthuria
+When Nova talks to Cynthia in the Eldoria world, their conversation does not have access to the Seraphina memory.
 
-    shared -->|"general facts about Nova"| nova
-    shared -->|"general facts about Amber"| amber
+When Amber talks to Seraphina in the Eldoria world, their conversation only has access to the Eldoria world memory.
 
-    world -->|"Eldoria's lore"| nova
-    world -->|"Eldoria's lore"| seraphina
-    world -->|"Camelot's lore"| amber
-    world -->|"Camelot's lore"| arthuria
-```
-
-Character and shared memory are always tied to the real person: nothing Nova tells Seraphina is visible to Amber, and nothing in Nova's shared memory carries over to Amber either. World lore is the exception: nothing ties it to Nova or Amber specifically, so both of them see the same facts about whichever world they are talking about.
+Note: here we assume each character, like Seraphina, is bound to only one world, while a user, like Nova, can change between worlds.
 
 ## World lore
 
-A third layer holds facts about a fictional setting itself: Eldoria's geography and history, or Camelot's, are both examples. It replaces SillyTavern's built-in World Info system, which only matches lore into the prompt by literal keyword. This layer uses the same similarity search as the rest of the memory system, so a paraphrased question still finds the relevant lore.
+The world lore layer holds facts about a fictional setting itself: Eldoria's geography and history, or Camelot's, are both examples. It replaces SillyTavern's built-in World Info system, which only matches lore into the prompt by literal keyword. This layer uses the same similarity search as the rest of the memory system, so a paraphrased question still finds the relevant lore.
 
 ### Binding a world
 
 - A **character** picks up a world through its own card: the globe icon in SillyTavern's character panel, its "Primary Lorebook" picker. Seraphina's card is bound to Eldoria; Arthuria's is bound to Camelot.
 - A **persona** can also bind to a world independently, through the persona panel's own lorebook picker.
-- If both are set, the persona's binding takes priority. If neither is set, the exchange is not tied to any world.
+- If both are set, the persona's binding takes priority. If neither is set (not recommended), the memories are not tied to any world.
 
 Whichever World Info file gets bound this way should stay empty of its own entries. SillyTavern's native keyword-matching still runs on a bound World Info file regardless of this memory system, so leaving entries in it means the same lore can get injected twice: once from mem0, once from SillyTavern's own matching. Keeping the binding but clearing its entries avoids that.
 
 ### Building lore, two ways
 
-- **Passively**, during ordinary roleplay: facts about the setting get picked out alongside the usual shared/character sorting (see "Sorting a memory" below), for whichever world is currently bound. This is how Eldoria's lore built up as Nova talked to Seraphina.
+- **Passively**, during ordinary roleplay: facts about the world get picked out alongside the usual shared/character memory extraction (see "Sorting a memory" below), for whichever world is currently bound. This is how Eldoria's lore built up as Nova talked to Seraphina.
 - **Actively**, with a dedicated interviewer character: import `sillytavern/character-cards/world-weaver.json` into SillyTavern, keeping the name exactly **World Weaver**, and talk to it like any other character. It asks about a world one question at a time and writes straight into that world's lore. This is how Camelot's lore could be built from scratch before Amber ever starts roleplaying with Arthuria. Because it writes into the same store the passive path reads from, a lorebook built this way is available immediately in a fresh roleplay session bound to that world. It never pulls in memory context for its own replies, so building a new world stays a clean slate, and every exchange with it is saved right away.
 
 ### A known limitation
@@ -79,15 +62,7 @@ The extraction step relies on a large prompt of its own, around 8,000 tokens, an
 
 Both facts from the example above start out saved as Seraphina-character memory, alongside anything actually specific to Nova and Seraphina's relationship. A second pass then checks each one: the veterinarian fact is general to Nova, so it moves to Nova's shared memory. The Shadowfangs fact is about the setting, so it moves to Eldoria's world lore. Anything left behind, say a private detail about how Seraphina reacted, stays as character memory. A fact only ever lives in one scope at a time.
 
-```mermaid
-flowchart TD
-    msg["Nova tells Seraphina she's a veterinarian,<br/>and that Eldoria's forest was corrupted"] --> extract["Facts are extracted from it"]
-    extract --> charmem[("Saved as Seraphina-character memory")]
-    charmem --> classify["A second pass checks which facts belong elsewhere"]
-    classify -->|"Nova is a veterinarian"| sharedmem[("Moved to Nova's shared memory")]
-    classify -->|"Eldoria's forest was corrupted"| worldmem[("Moved to Eldoria's world lore")]
-    classify -->|"specific to Nova and Seraphina"| stays[("Stays as character memory")]
-```
+![How a conversation gets sorted into character, shared, and world memory](diagrams/memory-system-2.svg)
 
 This second pass is best-effort. If it fails for any reason, the character memory from the first pass stays as is.
 
@@ -105,29 +80,6 @@ mem0 keeps a lightweight index linking named entities, people, places, quoted te
 
 ## How it all fits together
 
-Putting the write and read paths together, for Nova talking to Seraphina in Eldoria:
+Before Seraphina's next reply, all three scopes are searched based on embedding closeness and merged into the prompt:
 
-```mermaid
-flowchart TD
-    subgraph write["After each exchange"]
-        msg["Nova and Seraphina exchange messages"] --> ext["Facts extracted"]
-        ext --> cm[("Seraphina-character memory")]
-        ext --> cl["Checked for shared/world facts"]
-        cl --> sm[("Nova's shared memory")]
-        cl --> wm[("Eldoria's world lore")]
-    end
-
-    subgraph read["Before each reply"]
-        gen["Seraphina starts replying"] --> pull["Relevant memories are looked up"]
-        pull --> s1["Nova's shared memories tagged Eldoria"]
-        pull --> s2["Nova's memories with Seraphina"]
-        pull --> s3["Eldoria's lore"]
-        s1 --> merge["Injected into the prompt"]
-        s2 --> merge
-        s3 --> merge
-    end
-
-    sm -.->|"read back next time"| s1
-    cm -.->|"read back next time"| s2
-    wm -.->|"read back next time"| s3
-```
+![The three scopes merging into the prompt before a reply](diagrams/memory-system-3.svg)

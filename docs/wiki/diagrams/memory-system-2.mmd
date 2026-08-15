@@ -1,0 +1,39 @@
+---
+config:
+  look: handDrawn
+  theme: neutral
+  themeVariables:
+    fontFamily: Comic Neue
+  layout: elk
+  elk:
+    nodePlacementStrategy: BRANDES_KOEPF
+---
+flowchart TD
+    subgraph conv["Conversation"]
+        direction TD
+        nova_line["Nova: I work as a veterinarian. </br> I heard Eldoria's forest was corrupted."]
+        sera_line["Seraphina: I promise to protect you through the night."]
+        nova_line --> sera_line
+    end
+
+    subgraph facts["Memory Items"]
+        direction TD
+        f1["Seraphina promised to protect Nova"]
+        f2["Nova works as a veterinarian"]
+        f3["Eldoria's forest was corrupted"]
+    end
+
+    conv -->|"Memory Extraction"| facts
+
+    facts --> classify["Classifier"]
+
+    classify -->|"Seraphina promised to protect Nova"| char[("Character memory")]
+    classify -->|"Nova works as a veterinarian"| shared[("Shared memory")]
+    classify -->|"Eldoria's forest was corrupted"| world[("World lore")]
+
+    classDef charStyle fill:#e0e7ff,stroke:#3730a3
+    classDef sharedStyle fill:#dcfce7,stroke:#166534
+    classDef worldStyle fill:#fef3c7,stroke:#92400e
+    class char charStyle
+    class shared sharedStyle
+    class world worldStyle

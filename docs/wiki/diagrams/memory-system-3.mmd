@@ -1,0 +1,27 @@
+---
+config:
+  look: handDrawn
+  theme: neutral
+  themeVariables:
+    fontFamily: Comic Neue
+  layout: elk
+  elk:
+    nodePlacementStrategy: BRANDES_KOEPF
+---
+flowchart TD
+    char[("Character memory")]
+    shared[("Shared memory")]
+    world[("World lore")]
+
+    char --> merge["Injected into the prompt"]
+    shared --> merge
+    world --> merge
+
+    merge --> reply["Seraphina's next reply"]
+
+    classDef charStyle fill:#e0e7ff,stroke:#3730a3
+    classDef sharedStyle fill:#dcfce7,stroke:#166534
+    classDef worldStyle fill:#fef3c7,stroke:#92400e
+    class char charStyle
+    class shared sharedStyle
+    class world worldStyle

@@ -1,0 +1,39 @@
+---
+config:
+  look: handDrawn
+  theme: neutral
+  themeVariables:
+    fontFamily: Comic Neue
+  layout: elk
+  elk:
+    nodePlacementStrategy: BRANDES_KOEPF
+---
+flowchart TD
+    subgraph s1["Eldoria"]
+        nova1["Nova"] <-->|talks with| seraphina1["Seraphina"]
+    end
+
+    subgraph s2["Camelot"]
+        amber2["Amber"] <-->|talks with| arthuria2["Arthuria"]
+    end
+
+    subgraph s3["Eldoria"]
+        amber3["Amber"] <-->|talks with| seraphina3["Seraphina"]
+    end
+
+    subgraph s4["Eldoria"]
+        nova4["Nova"] <-->|talks with| cynthia4["Cynthia"]
+    end
+
+    f1["Character:<br/>Seraphina promised to protect Nova"]
+    f2["Shared:<br/>Nova works as a veterinarian"]
+    f3["World:<br/>Eldoria is a big forest"]
+    f4["World:<br/>Camelot has knights"]
+
+    f1 --> s1
+    f2 --> s1
+    f3 --> s1
+    f3 --> s3
+    f4 --> s2
+    f2 --> s4
+    f3 --> s4
