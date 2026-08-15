@@ -45,17 +45,19 @@ Docker Desktop is still installed and selectable via `docker context`, but nativ
   VRAM (once KV cache quantization was matched on both sides) — full
   benchmark methodology and numbers in `docs/LLAMA_CPP_BENCHMARK.md`.
 - **One unified model still serves both roleplay generation and memory
-  extraction**, now enforced automatically rather than by convention:
-  `mem0-service` asks the router what models actually exist
-  (`GET /models` — no hardcoded model names anywhere) and builds one
-  `Memory` instance per discovered model at startup; the SillyTavern
-  extension reads its own currently-active model
-  (`context.textCompletionSettings.llamacpp_model`) and sends it with every
-  extraction request, so `mem0-service` always uses whatever SillyTavern is
-  actually using. This replaced an earlier, broken version of this exact
-  system where `mem0`'s model was a separate hardcoded config value that
-  could silently drift from SillyTavern's — caught by testing, not
-  inspection (see "Lessons learned").
+  extraction**, now true for any backend, not just llama.cpp: `mem0-service`
+  has no LLM client of its own for anything live. Memory extraction and the
+  shared/world classification pass instead run through SillyTavern's own
+  `context.generateRaw()` (called from the extension, see "ST ↔ mem0
+  integration" below) — whatever connection and model SillyTavern is
+  actually using, OpenAI, Claude, llama.cpp, anything it supports, is what
+  runs the completion, with nothing to keep in sync on mem0-service's side.
+  This replaced two earlier, narrower versions of this exact system: first a
+  separate hardcoded config value on `mem0-service` that could silently
+  drift from SillyTavern's — caught by testing, not inspection — then a
+  version that asked llama.cpp's router `GET /models` and read
+  `context.textCompletionSettings.llamacpp_model`, which worked but only for
+  that one backend.
 - Two quants configured in the preset: `gemma-q4` (safe default, ~3.3 GB) and
   `gemma-q8` (~5.3 GB, tight — see below). `ctx-size` stays at 16384 for the
   same reason as always: mem0's extraction system prompt alone is ~8,000
@@ -92,13 +94,28 @@ Docker Desktop is still installed and selectable via `docker context`, but nativ
 - Vector store: **Qdrant** (self-hosted container), chosen over Chroma as
   mem0's best-supported/most-tested backend and better suited to a
   long-running multi-consumer service than Chroma's embedded-first design.
-- `llm` and `embedder` config both point at the local llama.cpp container's
-  OpenAI-compatible API (`MEM0_LLM_PROVIDER=openai`/`MEM0_EMBEDDER_PROVIDER=openai`,
-  `*_BASE_URL=http://llama-cpp:8080/v1`) — mem0 defaults both to real OpenAI
-  otherwise. `mem0-service/main.py` builds one `Memory` instance per model
-  discovered from the router (see "Inference" above) rather than a single
-  fixed instance; `MEM0_LLM_MODEL`/`MEM0_EMBEDDER_MODEL` are just the
-  fallback defaults for a request that doesn't specify a model.
+- `embedder` config points at the local llama.cpp container's OpenAI-compatible
+  API (`MEM0_EMBEDDER_PROVIDER=openai`, `MEM0_EMBEDDER_BASE_URL=http://llama-cpp:8080/v1`)
+  — mem0 defaults to real OpenAI otherwise. This is deliberately the *only*
+  directly-configured external endpoint left in `mem0-service` — see
+  "Inference" above for why the LLM side has no equivalent config: most
+  chat-only backends (Claude has no embedding API at all) don't expose
+  embeddings the same way a completion can be requested through
+  SillyTavern's own connection, so this one piece stays independently
+  configured, still swappable to any other OpenAI-compatible embedding
+  endpoint.
+- `mem0-service` still builds a real `Memory` instance per request rather
+  than one shared mutable instance — not for model routing anymore (there's
+  no LLM config left to route between), but for thread safety: extraction
+  and classification each swap in a small shim object for `Memory.llm`
+  (`_CapturePromptLLM` to intercept mem0's own extraction prompt without
+  completing generation, `_ReplayLLM` to feed an already-generated
+  completion back into mem0's real pipeline) and FastAPI runs sync route
+  handlers in a thread pool, so a shared mutable `.llm` attribute would race
+  across concurrent requests. Construction is cheap (embedder/vector_store
+  are lightweight HTTP-based clients, and mem0's history db is a fixed
+  on-disk file every instance shares) — confirmed by reading mem0's own
+  `Memory.__init__`/`_add_to_vector_store` directly, not assumed.
 - `MEM0_TELEMETRY=False` set explicitly — mem0 defaults to phoning home to
   PostHog otherwise, which would violate the local-only requirement.
 - **No graph database (Neo4j, FalkorDB, or otherwise) is used.** `graph_store`
@@ -129,13 +146,15 @@ The original open question ("shared vs. per-character memory") is resolved:
   to one character, private to it.
 - `GET /memories/context` runs both queries and returns them separately;
   callers (the SillyTavern extension) merge them for prompt injection.
-- **LLM-based classification**: every character-scoped `POST /memories` also
-  runs a second, lightweight classification pass (same model, a separate
-  prompt asking "which of these facts are general vs. relationship-specific")
-  and **moves** general facts into the shared layer via a second `mem0.add()`
-  call with `infer=False` (storing the already-classified text directly,
-  skipping re-extraction) followed by deleting the character-scoped
-  original. A memory only ever lives in one scope at a time — an earlier
+- **LLM-based classification**: every character-scoped extraction also runs
+  a second, lightweight classification pass (same model — whatever
+  SillyTavern is connected to, see "One unified model..." above — a
+  separate prompt asking "which of these facts are general vs.
+  relationship-specific") and **moves** general facts into the shared layer
+  via a second `mem0.add()` call with `infer=False` (storing the
+  already-classified text directly, skipping re-extraction) followed by
+  deleting the character-scoped original. A memory only ever lives in one
+  scope at a time — an earlier
   version mirrored instead of moving (kept both copies), which meant a
   query pulling both scopes for a relevant question could inject the same
   fact twice; deleting the original after a successful move fixed this.
@@ -182,15 +201,16 @@ the shared/character split above:
 - **Two ways lore gets written, both automatic — never manually posted
   during normal use:**
   1. **Passive**, during ordinary roleplay: the existing shared/character
-     classifier (`classify_facts` in `mem0-service/main.py`) is 3-way —
-     shared / character-private / world. It does **not** re-extract facts
-     from the raw conversation — an earlier version did, independently
-     re-deriving its own view of what counted as shared/world, and was
-     unreliable about respecting its own "exclude character personality/
-     traits" rule (observed leaking a character's job/habits into shared
-     memory). It now operates on the memory items Pass 1 (mem0's own
-     extraction, run moments earlier in the same `add_memory()` call)
-     already produced: the prompt states all three scopes plainly
+     classifier (`/classification/prompt`+`/classification/apply` in
+     `mem0-service/main.py`) is 3-way — shared / character-private / world.
+     It does **not** re-extract facts from the raw conversation — an
+     earlier version did, independently re-deriving its own view of what
+     counted as shared/world, and was unreliable about respecting its own
+     "exclude character personality/traits" rule (observed leaking a
+     character's job/habits into shared memory). It now operates on the
+     memory items Pass 1 (mem0's own extraction, run moments earlier via
+     `/extraction/prompt`+`/extraction/store`) already produced: the prompt
+     states all three scopes plainly
      (character/shared/world), and classifies each item by number rather
      than retyping its text — selected facts are looked up verbatim by
      index afterward, not trusted to be reproduced unchanged. A fact
@@ -212,11 +232,12 @@ the shared/character split above:
      `World Weaver`, detected client-side by name. Card JSON lives at
      `sillytavern/character-cards/world-weaver.json` (import via ST's
      character panel, once per environment — not auto-installed). Its
-     exchanges route to `POST /worlds/interview` instead of the normal
-     `/add` path — a dedicated extraction prompt (`WORLD_INTERVIEW_PROMPT`)
-     identifies both the world's name *and* its facts from the interview
-     transcript, since (unlike a roleplay character) it isn't bound to one
-     fixed world going in. World-scope only — deliberately does **not**
+     exchanges route to `/worlds/interview/prompt`+`/worlds/interview/apply`
+     instead of the normal extraction pair — a dedicated extraction prompt
+     (`WORLD_INTERVIEW_PROMPT`) identifies both the world's name *and* its
+     facts from the interview transcript, since (unlike a roleplay
+     character) it isn't bound to one fixed world going in. World-scope
+     only — deliberately does **not**
      also run shared-fact classification against the interview transcript
      (an interview isn't a conversation with a character, so there's no
      relationship dimension). Because it writes into the same store the
@@ -276,18 +297,17 @@ the shared/character split above:
   `user_id="world"` sentinel rather than the real user, so it's genuinely
   shared across whoever talks about that world — matching that it's meant
   to represent the setting, not any one person's data.
-- `POST /worlds/{world}/memories` is a low-level write primitive (content
-  in, mem0's normal extraction pipeline runs on it, `infer` left at its
-  default `True`) — used only by the one-time backfill script
-  (`scripts/migrate-lorebook-to-mem0.sh <world-json-file> <world-name>
-  [mem0-url]`), which reads an existing ST World Info file's
-  `entries[*].content` and posts each through it before that file's
-  entries get emptied, so pre-existing lore isn't lost. Deliberately runs
-  extraction rather than storing the raw blob verbatim — ST World Info
-  entries are often whole example-dialogue blocks (`{{user}}: "..."
-  {{char}}: "..."`), not atomic facts, and verbatim storage would embed a
-  huge, semantically-diluted blob instead of the same atomic-fact shape
-  every other write path produces.
+- One-time lorebook backfill (an existing ST World Info file's
+  `entries[*].content`, migrated before that file's entries get emptied so
+  pre-existing lore isn't lost) reuses the same `/extraction/prompt`/
+  `/extraction/store` pair every other write path uses, just with
+  `user_id: "world"` — there's no separate low-level endpoint for it. It's
+  a real UI button now (see "ST ↔ mem0 integration" below), not a script,
+  and it deliberately runs real extraction rather than storing each entry's
+  raw blob verbatim — ST World Info entries are often whole example-dialogue
+  blocks (`{{user}}: "..." {{char}}: "..."`), not atomic facts, and verbatim
+  storage would embed a huge, semantically-diluted blob instead of the same
+  atomic-fact shape every other write path produces.
 
 ### Frontend (SillyTavern)
 
@@ -326,9 +346,12 @@ break the "internal services stay local" posture.
 1. **Server plugin** (`sillytavern/plugins/roleplay-memory/`, Node.js,
    requires `enableServerPlugins: true` in `config.yaml`). Runs *inside* the
    ST container, so it can reach `http://mem0:8001` over the internal Docker
-   network like any other service. Exposes `/api/plugins/roleplay-memory/context`
-   and `/add`, proxying to `mem0-service`. This is the piece that actually
-   solves the reachability problem.
+   network like any other service. A thin fetch-and-relay proxy to
+   `mem0-service` — `/context` (pull), plus one route per mem0-service
+   build-prompt/apply-result endpoint (`/extraction/prompt`,
+   `/extraction/store`, `/classification/prompt`, `/classification/apply`,
+   `/worlds/interview/prompt`, `/worlds/interview/apply`) for push. This is
+   the piece that actually solves the reachability problem.
    - Needs its own `package.json` with `"type": "commonjs"` — the ST app's own
      `package.json` declares `"type": "module"`, so a bare `.js` file in a
      subdirectory without one gets treated as ESM by default and
@@ -348,27 +371,51 @@ break the "internal services stay local" posture.
      with a comment). Getting this wrong doesn't error — it just silently
      doesn't appear in the prompt.
    - **Push**: listens for `MESSAGE_RECEIVED`, batches exchanges into a
-     buffer rather than sending after every single message, and flushes
-     (POSTs to the plugin's `/add` route) on whichever comes first: buffer
-     crosses ~800 estimated tokens (character count / 4, not exact
-     tokenization), 2 minutes of idle conversation, the user says something
-     like "remember this"/"memorize that", or the chat/character changes
-     (flushes immediately so buffered messages don't get misattributed to
-     whatever character comes next).
+     buffer rather than sending after every single message, and flushes on
+     whichever comes first: buffer crosses ~800 estimated tokens (character
+     count / 4, not exact tokenization), 2 minutes of idle conversation, the
+     user says something like "remember this"/"memorize that", or the
+     chat/character changes (flushes immediately so buffered messages don't
+     get misattributed to whatever character comes next).
+   - A flush is a **build-prompt / apply-result** round trip through the
+     plugin, with the actual LLM call sandwiched in the middle via ST's own
+     `context.generateRaw({ prompt, systemPrompt })`: `/extraction/prompt`
+     → `generateRaw()` → `/extraction/store`, then (character-scoped only)
+     `/classification/prompt` → `generateRaw()` → `/classification/apply`.
+     `generateRaw()` runs through whatever backend/model is actually
+     connected — no `model` field is sent anywhere anymore; mem0-service has
+     no per-model routing left to feed it. Deliberately **not** using
+     `generateRaw()`'s `jsonSchema` option — confirmed by reading
+     `extractJsonFromData()` in ST's own `public/script.js` that its
+     jsonSchema-extraction path only has a case for `mainApi === 'openai'`
+     (every chat-completion source); for `textgenerationwebui` (llama.cpp
+     and every other Text Completion backend, this project's own default)
+     it silently returns `"{}"`, discarding the real output. Plain
+     generation plus mem0-service's own tolerant JSON-with-fallback parsing
+     works uniformly across every backend instead. `trimNames: false` is
+     passed too, since a JSON response never has a legitimate
+     "CharacterName: " prefix worth ST's narrative-cleanup stripping.
    - POST requests to ST's own API need an `X-CSRF-Token` header (fetched
      from `/csrf-token` first) or they get rejected with 403, even with valid
      basic-auth/session.
    - `user_id`/`agent_id` are derived client-side from ST's own state:
      `user_id` from the persona name (`context.name1`), `agent_id` from the
      active character's name (`context.characters[context.characterId].name`)
-     — both slugified.
-   - Also sends `model`, read from
-     `context.textCompletionSettings.llamacpp_model` (only when
-     `mainApi === 'textgenerationwebui'` and `textCompletionSettings.type
-     === 'llamacpp'`) — this is what keeps mem0's extraction model in sync
-     with whatever SillyTavern is actually generating with. Both fields
-     aren't part of the documented extension API; verified directly against
-     `st-context.js`'s `getContext()` before relying on them.
+     — both slugified. Neither field is part of the documented extension
+     API; verified directly against `st-context.js`'s `getContext()` before
+     relying on it.
+   - **Lorebook migration** is a button injected into ST's own World Info
+     editor toolbar (next to `#world_popup_delete`, confirmed via
+     `public/index.html`), not a standalone script — reads the selected
+     world's entries via `context.loadWorldInfo(name)` and runs each one
+     through the same `/extraction/prompt` → `generateRaw()` →
+     `/extraction/store` cycle as ordinary roleplay, just scoped to
+     `user_id: "world"` instead of a real user. Offers to clear the World
+     Info file's entries afterward via `context.saveWorldInfo(name, {
+     ...data, entries: {} }, true)`, matching "Binding a world" below.
+     Replaced `scripts/migrate-lorebook-to-mem0.sh` outright — with no
+     directly-configured LLM left on `mem0-service` at all, there was
+     nothing left for a standalone script to call.
 
 ### Dev vs. prod environments
 
@@ -468,10 +515,15 @@ break the "internal services stay local" posture.
 - **mem0's `OpenAILLM.generate_response()` has no per-call model
   override** — it always uses `self.config.model`, fixed at construction,
   regardless of any `model` kwarg passed in. Point-in-time discovery, not
-  assumption (checked the installed package's source directly). This is why
-  per-request model routing needed one `Memory` instance per model
-  (`mem0-service/main.py`'s `memories_by_model`) rather than a single
-  instance with a swapped-in model name.
+  assumption (checked the installed package's source directly). This first
+  meant per-request model routing needed one `Memory` instance per model
+  (`memories_by_model`, since removed) rather than a single instance with a
+  swapped-in model name — and later, once extraction moved off
+  mem0-service's own LLM client entirely (see "One unified model..." above),
+  became the reason `Memory.llm` gets swapped to a small shim object
+  (`_CapturePromptLLM`/`_ReplayLLM`) per request instead: same underlying
+  fact (no clean per-call override), different workaround for a different
+  problem.
 - **llama.cpp's router mode runs each model as a genuinely separate OS
   process**, each with its own CUDA context — confirmed via distinct PIDs
   in the container logs. This means per-process CUDA context overhead
@@ -528,8 +580,8 @@ model.
 - [x] World lore layer (mem0-based, replacing ST's native World Info) is
       decided and implemented end-to-end — see "World lore" above.
 - [x] World Weaver character imported into dev SillyTavern and verified
-      working (interview → `/worlds/interview` → world-scoped memory,
-      confirmed via a real transcript).
+      working (interview → `/worlds/interview/prompt`+`/apply` → world-scoped
+      memory, confirmed via a real transcript).
 - [ ] World Weaver character still needs to be imported into **prod**
       SillyTavern manually (`sillytavern/character-cards/world-weaver.json`,
       drag-and-drop into the character panel) — `mem0-prod` and
@@ -541,3 +593,17 @@ model.
       for unrelated worlds, since tagging happens per-batch, not per-fact.
       Fixing it needs the classifier to also judge per-fact universality —
       left as a deliberate non-fix, not forgotten.
+- [x] Memory extraction/classification decoupled from llama.cpp specifically
+      — `mem0-service` has no LLM client left at all (only the embedder
+      stays directly configured); extraction and classification run through
+      SillyTavern's own `context.generateRaw()` instead, so any backend ST
+      supports works automatically. Verified server-side end-to-end (curl
+      against every new `mem0-service` endpoint pair, entity linking
+      confirmed via direct Qdrant queries, `mem0` confirmed to boot and
+      serve `/health` cleanly with `llama-cpp` stopped) and the plugin relay
+      verified through a real authenticated request against dev
+      SillyTavern. **Not yet verified**: a real flush through the actual
+      browser UI (the `generateRaw()` leg can't be curl-tested), and a real
+      test with a non-llama.cpp backend connected — the actual claim this
+      change makes, so it needs a hands-on check before calling the
+      backend-agnostic story fully proven, not just code-reviewed.
