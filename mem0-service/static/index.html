@@ -19,6 +19,7 @@
   .card { border: 1px solid #ddd; border-radius: 6px; padding: 0.75rem; margin-bottom: 0.75rem; }
   .card .meta { font-size: 0.8rem; color: #666; margin-bottom: 0.4rem; }
   .card .scope { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 3px; background: #e0e7ff; color: #3730a3; font-size: 0.75rem; margin-right: 0.5rem; }
+  .card .world { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 3px; background: #dcfce7; color: #166534; font-size: 0.75rem; margin-right: 0.5rem; }
   .card textarea { width: 100%; box-sizing: border-box; min-height: 3rem; font-family: inherit; font-size: 0.95rem; padding: 0.4rem; border: 1px solid #ddd; border-radius: 4px; resize: vertical; }
   .card textarea[readonly] { background: #fafafa; border-color: transparent; }
   .card .actions { margin-top: 0.5rem; display: flex; gap: 0.5rem; }
@@ -213,7 +214,13 @@ function renderCard(item) {
   meta.className = 'meta';
   const scopeLabel = item.agent_id === 'shared' ? 'shared' : (item.agent_id || 'unscoped');
   const when = item.created_at ? new Date(item.created_at).toLocaleString() : '';
-  meta.innerHTML = `<span class="scope">${escapeHtml(scopeLabel)}</span>${escapeHtml(when)}`;
+  // World tag only applies to shared-scope items (see mem0-service/main.py's
+  // NO_WORLD-tagged shared writes) -- absent metadata means it predates that
+  // change, so there's nothing to show rather than a misleading default.
+  const world = item.agent_id === 'shared' ? item.metadata?.world : undefined;
+  const worldLabel = world === 'none' ? 'universal' : world;
+  const worldBadge = worldLabel ? `<span class="world">${escapeHtml(worldLabel)}</span>` : '';
+  meta.innerHTML = `<span class="scope">${escapeHtml(scopeLabel)}</span>${worldBadge}${escapeHtml(when)}`;
   div.appendChild(meta);
 
   const textarea = document.createElement('textarea');
