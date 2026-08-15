@@ -1,6 +1,6 @@
 # Memory System
 
-Everything the local model remembers about you, your characters, and your fictional worlds is stored and retrieved through [mem0](https://github.com/mem0ai/mem0) on top of [Qdrant](https://github.com/qdrant/qdrant), a vector database. Durable facts survive beyond what fits in the model's context window without resending or re-summarizing the whole past conversation. They are extracted once, stored, and pulled back later through a similarity search, then injected as a short line before the model replies. This page covers how that works and how to use it.
+Everything the model remembers about you, your characters, and your fictional worlds is stored and retrieved through [mem0](https://github.com/mem0ai/mem0) on top of [Qdrant](https://github.com/qdrant/qdrant), a vector database, both self-hosted. This works the same way regardless of which backend SillyTavern is actually talking to for chat — a cloud API, an aggregator, or a local model. Durable facts survive beyond what fits in the model's context window without resending or re-summarizing the whole past conversation. They are extracted once, stored, and pulled back later through a similarity search, then injected as a short line before the model replies. This page covers how that works and how to use it.
 
 The examples below use two people, Nova and Amber, two characters, Seraphina and Arthuria, and two worlds, Eldoria and Camelot, to make the scoping concrete. Nova roleplays with Seraphina, who is bound to Eldoria. Amber roleplays with Arthuria, who is bound to Camelot.
 
@@ -45,15 +45,9 @@ Whichever World Info file gets bound this way should stay empty of its own entri
 
 ### Migrating an existing lorebook
 
-A world that already has lore in SillyTavern's native World Info format does not need to be re-typed through World Weaver. A backfill script reads an existing World Info JSON file's entries and runs each one through the same extraction step as ordinary roleplay, writing the results straight into that world's lore:
+A world that already has lore in SillyTavern's native World Info format does not need to be re-typed through World Weaver. Open that world in SillyTavern's own World Info editor and click the brain icon next to the delete button in its toolbar. It reads every entry in that world and runs each one through the same extraction step as ordinary roleplay, writing the results straight into that world's lore, then offers to clear the World Info file's entries once it is done (see "Binding a world" above for why that matters).
 
-```bash
-./scripts/migrate-lorebook-to-mem0.sh <world-json-file> <world-name>
-```
-
-`<world-json-file>` is the path to the World Info JSON, for example `sillytavern/data/default-user/worlds/Eldoria.json`. `<world-name>` is the world's name, for example `Eldoria` — pass the plain name and let the script lowercase and format it to match how the extension and memory service already refer to that world. An optional third argument points the script at prod's memory service instead of dev's.
-
-Run this once per world, before emptying that World Info file's entries (see "Binding a world" above). It is a one-time backfill and does not need to be repeated after every change.
+This is a one-time backfill, not something to repeat after every change, and it can take a while for a large world, since each entry runs through a real extraction step, one at a time.
 
 ### A known limitation
 
@@ -61,16 +55,16 @@ Shared memory tagged with a world only resurfaces for that same world, so a pers
 
 ## Setting it up in SillyTavern
 
-1. Enable the extension (Manage Extensions → **Roleplay Memory**) — see [Running the Stack](Running-the-Stack.md) step 7 if you have not yet.
+1. Enable the extension (Manage Extensions → **Roleplay Memory**) — see [Installing the Memory System](Installing-the-Memory-System.md) if you have not yet.
 2. Bind a character or persona to a world if you want world lore for it (globe icon on the character panel, or the persona panel's own lorebook picker).
-3. To build lore deliberately, import `sillytavern/character-cards/world-weaver.json` as a character and talk to it, see "Building lore" above.
+3. To build lore deliberately or migrate an existing lorebook, see "Building lore, two ways" above.
 4. Browse, hand-edit, or delete any memory, including which world a shared memory is tagged with, at `http://localhost:8001/ui/`.
 
 ## How memories are extracted
 
 A conversation does not become a memory verbatim. Say Nova tells Seraphina she works as a veterinarian, and mentions that Eldoria's forest was corrupted by the Shadowfangs. mem0 reads that exchange and produces self-contained, atomic factual statements from it: "Nova works as a veterinarian" and "Eldoria's forest was corrupted by the Shadowfangs," covering both what Nova said and what Seraphina said. This decides what is worth remembering at all.
 
-The extraction step relies on a large prompt of its own, around 8,000 tokens, and any model doing extraction needs enough context space to hold it comfortably (16384 or higher, see [Changing the Model](Changing-the-Model.md)). A smaller context window silently truncates that prompt, and extraction quietly breaks.
+The extraction step relies on a large prompt of its own, around 8,000 tokens, and whichever model handles it needs enough context space to hold that comfortably. The bundled local setup keeps its context window at 16384 tokens or higher for exactly this reason (see [Changing the Model](Changing-the-Model.md)); a cloud model's context window is normally large enough on its own. A context window too small silently truncates the prompt, and extraction quietly breaks.
 
 ## When extraction happens
 
@@ -95,11 +89,11 @@ This second pass is best-effort. If it fails for any reason, the character memor
 
 ## Automatic model sync
 
-One model handles both roleplay generation and memory extraction, kept in sync automatically. The memory service asks the local inference server what models actually exist, and SillyTavern sends its own currently active model along with every extraction request. Switch models in SillyTavern's dropdown and extraction follows immediately, with nothing else to update.
+One connection handles both roleplay generation and memory extraction, kept in sync automatically, whichever backend SillyTavern is actually connected to — a cloud API like OpenAI or Claude, an aggregator like OpenRouter, or a local server like the bundled llama.cpp setup. SillyTavern itself generates the short completions memory extraction needs, using whatever connection is currently active, rather than the memory service reaching out to a language model on its own. Switch backends or models in SillyTavern's own connection settings and extraction follows immediately, with nothing else to update. The embedding model is the one piece that stays separately configured — see [Storage](#storage) below for why.
 
 ## Storage
 
-Qdrant stores every memory, across all three scopes, in one place, along with a smaller index that links named people, places, and terms mentioned in a memory back to that memory (see "The entity store" below). The embedding model that turns memories into searchable vectors, `nomic-embed-text-v1.5`, is served from the same local inference server as the chat models, so there is no separate embedding service to run.
+Qdrant stores every memory, across all three scopes, in one place, along with a smaller index that links named people, places, and terms mentioned in a memory back to that memory (see "The entity store" below). The embedding model that turns memories into searchable vectors, `nomic-embed-text-v1.5`, is served from the bundled local llama.cpp setup by default, so there is no separate embedding service to run unless you point it elsewhere. This is the one piece of the memory system that stays locally hosted regardless of which backend handles chat and extraction (see "Automatic model sync" above) — it can be pointed at a different embedding endpoint if you want, but there always needs to be one configured somewhere.
 
 `nomic-embed-text-v1.5` only supports English. For other languages, a multilingual embedding model would need to replace it — two current options are [nomic-embed-text-v2-moe](https://huggingface.co/nomic-ai/nomic-embed-text-v2-moe-GGUF) (Nomic AI, about 100 languages, 768 dimensions, 512-token max input) and [EmbeddingGemma](https://huggingface.co/google/embeddinggemma-300m) (Google, about 100 languages, 768 dimensions; GGUF builds at [ggml-org/embeddinggemma-300M-GGUF](https://huggingface.co/ggml-org/embeddinggemma-300M-GGUF)). Switching is more than a config change: every existing memory's vector was computed with the old model, and vectors from two different models are not comparable, so existing memories would need to be re-embedded rather than just pointed at the new model.
 

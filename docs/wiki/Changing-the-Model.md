@@ -1,6 +1,6 @@
 # Changing the Model
 
-One model serves both roleplay generation and memory extraction (see [Memory System](Memory-System.md)). This page is about that model. The embedding model is separate — see [Memory System's Storage section](Memory-System.md#storage) if you want to change it, for example to a multilingual one.
+One model serves both roleplay generation and memory extraction, automatically, for whichever backend SillyTavern is connected to (see [Memory System](Memory-System.md)). This page is specifically about the bundled local llama.cpp setup's model — swapping the GGUF file it runs. If SillyTavern is pointed at a different backend instead (a cloud API, an aggregator), changing the model is just picking a different one in SillyTavern's own connection settings; none of the steps below apply. The embedding model is always separate regardless of backend — see [Memory System's Storage section](Memory-System.md#storage) if you want to change it, for example to a multilingual one.
 
 ## Steps
 
@@ -24,7 +24,7 @@ One model serves both roleplay generation and memory extraction (see [Memory Sys
    - **mem0 extraction** — spins up throwaway containers pointed at the real llama.cpp service and runs a real extraction request through them. A model that generates fine can still fail mem0's structured JSON extraction — this project has hit that before with roleplay-tuned "abliterated" checkpoints that were unreliable at extraction specifically, regardless of quantization.
 
    Pick a different model if anything fails.
-5. **Point SillyTavern at it.** API Connections, re-pick the new model from the dropdown (same place as [Running the Stack](Running-the-Stack.md) step 6). mem0 follows automatically — it reads whichever model SillyTavern is actually using on every request, so there's no separate mem0 config to update.
+5. **Point SillyTavern at it.** API Connections, re-pick the new model from the dropdown (same place as [Local-Only Setup](Local-Only-Setup.md)'s "Point SillyTavern at llama.cpp" step). mem0 follows automatically — it reads whichever model SillyTavern is actually using on every request, so there's no separate mem0 config to update.
 
 ## Models checked so far
 

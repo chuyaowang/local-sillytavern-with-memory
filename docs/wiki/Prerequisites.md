@@ -1,11 +1,10 @@
 # Prerequisites
 
-This page is the one-time host setup needed before any of it will run — nothing here is specific to this project. See [Running the Stack](Running-the-Stack.md) for the project-specific steps once these are done.
+This page is the one-time host setup needed before the memory system itself will run — nothing here is specific to this project. See [Installing the Memory System](Installing-the-Memory-System.md) for the project-specific steps once these are done. [Remote Access](Remote-Access.md) has its own further prerequisite (Tailscale), needed only if reaching this from another device.
 
 ## What you need
 
 - A Linux computer with an NVIDIA GPU.
-- [Tailscale](https://tailscale.com) set up on it, and on whatever device you want to reach it from. Not necessary if you only want to access it locally.
 - Native Docker Engine, installed via apt below. Docker Desktop for Linux runs everything inside an internal VM, which adds an indirection layer GPU passthrough doesn't need.
 
 The commands below target Ubuntu 22.04. Ask an LLM to adapt them for your own distribution.
@@ -49,7 +48,3 @@ docker run --rm --gpus all nvidia/cuda:12.6.0-base-ubuntu22.04 nvidia-smi
 ```
 
 This should print your GPU info from inside the container. Fix that before going any further if it doesn't — nothing downstream will work without it.
-
-## Set up Tailscale
-
-Install and log in on both the host machine and whatever device (phone, laptop) you want to reach SillyTavern from — [tailscale.com/download](https://tailscale.com/download). `tailscale status` on either device shows you the Tailscale IPs you'll need in [Running the Stack](Running-the-Stack.md).

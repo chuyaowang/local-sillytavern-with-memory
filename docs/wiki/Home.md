@@ -1,6 +1,6 @@
 # Local SillyTavern with Memory — Wiki
 
-A self-hosted roleplay/chat setup: local LLM inference (llama.cpp), a persistent multi-layered memory system (mem0 + Qdrant), and SillyTavern as the chat frontend, all wired together to run entirely on your own hardware.
+A self-hosted, backend-agnostic memory system for SillyTavern (mem0 + Qdrant), wired in through a plugin and extension so it works with whichever chat backend SillyTavern is already connected to. Also bundles a complete local chat stack (llama.cpp and SillyTavern) as an optional, zero-cloud-dependency way to run the whole thing.
 
 This wiki is the detailed reference. The [README](https://github.com/chuyaowang/local-sillytavern-with-memory#readme) is the short version for anyone just browsing the repo.
 
@@ -8,10 +8,12 @@ This wiki is the detailed reference. The [README](https://github.com/chuyaowang/
 
 | Page | What's in it |
 | --- | --- |
-| [Prerequisites](Prerequisites.md) | One-time host setup: Docker Engine, NVIDIA Container Toolkit, Tailscale. |
-| [Running the Stack](Running-the-Stack.md) | Getting this repo running: cloning it, the model files, SillyTavern config, bringing the stack up, and setting up a separate dev/prod split. |
-| [Changing the Model](Changing-the-Model.md) | Swapping the model, what the test script checks, and models verified so far. |
+| [Prerequisites](Prerequisites.md) | One-time host setup the memory system needs: Docker Engine, NVIDIA Container Toolkit. |
+| [Installing the Memory System](Installing-the-Memory-System.md) | Adding this to an existing SillyTavern, plus a separate dev/prod split. |
 | [Memory System](Memory-System.md) | The three memory scopes, how facts get remembered and sorted, storage, the embedding model, the entity store, world lore, and how it all fits together. |
+| [Local-Only Setup](Local-Only-Setup.md) | An optional, fully-local alternative: the bundled llama.cpp model and SillyTavern, wired up together. |
+| [Changing the Model](Changing-the-Model.md) | Swapping the local model, what the test script checks, and models verified so far. |
+| [Remote Access](Remote-Access.md) | Reaching the bundled SillyTavern from another device over Tailscale. |
 | [SillyTavern Troubleshooting](SillyTavern-Troubleshooting.md) | Settings and gotchas specific to this project, and why they're needed. |
 | [Third-Party Components](Third-Party-Components.md) | Licenses for everything this project wires together. |
 
