@@ -217,6 +217,17 @@ SHARED_AGENT_ID = "shared"
 # literally slugifying to "world" would collide, same acceptable edge case.
 WORLD_USER_ID = "world"
 
+# Shared memories get tagged with the world that was resolved (persona-bound,
+# else character-bound -- see the ST extension's resolveWorld()) when they
+# were written, via mem0's metadata filtering (confirmed supported: filters
+# accept arbitrary metadata keys, not just user_id/agent_id/run_id -- see
+# Memory.search()'s docstring). NO_WORLD is a real sentinel value rather than
+# leaving the field unset, same reasoning as SHARED_AGENT_ID/WORLD_USER_ID
+# above: mem0's filter DSL has no "field is unset" operator, so a fact
+# learned with no world bound still needs a concrete value to be queryable
+# as "universal" (visible regardless of which world, if any, is relevant).
+NO_WORLD = "none"
+
 
 def _slugify(value: str) -> str:
     # Mirrors sillytavern/extensions/roleplay-memory/index.js's slugify() so
@@ -329,7 +340,13 @@ def add_memory(req: AddMemoryRequest):
         facts = classify_facts(mem, character_memories, world=req.world)
         if facts["shared_facts"]:
             shared_messages = [{"role": "user", "content": fact} for fact in facts["shared_facts"]]
-            mem.add(shared_messages, user_id=req.user_id, agent_id=SHARED_AGENT_ID, infer=False)
+            mem.add(
+                shared_messages,
+                user_id=req.user_id,
+                agent_id=SHARED_AGENT_ID,
+                infer=False,
+                metadata={"world": req.world or NO_WORLD},
+            )
         if facts["world_facts"]:
             world_messages = [{"role": "user", "content": fact} for fact in facts["world_facts"]]
             mem.add(world_messages, user_id=WORLD_USER_ID, agent_id=req.world, infer=False)
@@ -498,7 +515,14 @@ def search_memories(query: str, user_id: str, agent_id: Optional[str] = None, al
 
 @app.get("/memories/context")
 def get_context(query: str, user_id: str, agent_id: Optional[str] = None, world: Optional[str] = None):
-    shared = memory.search(query, filters={"user_id": user_id, "agent_id": SHARED_AGENT_ID})
+    # A shared fact learned with no world bound (NO_WORLD) is universal and
+    # always included; one learned within a specific world only surfaces
+    # again for that same world, not for an unrelated one -- otherwise a
+    # personal detail like "the user's mount is the Aetherian Stride"
+    # (learned while bound to Eldoria) would leak into a conversation with a
+    # character from a completely different setting.
+    world_filter = {"in": [world, NO_WORLD]} if world else NO_WORLD
+    shared = memory.search(query, filters={"user_id": user_id, "agent_id": SHARED_AGENT_ID, "world": world_filter})
     character = memory.search(query, filters={"user_id": user_id, "agent_id": agent_id}) if agent_id else []
     lore = memory.search(query, filters={"user_id": WORLD_USER_ID, "agent_id": world}) if world else []
     return {"shared": shared, "character": character, "world": lore}
