@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 import threading
@@ -7,6 +8,8 @@ from contextlib import contextmanager
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
+
+logger = logging.getLogger("mem0-service")
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from qdrant_client.models import FieldCondition, Filter, MatchValue
@@ -391,8 +394,16 @@ def extraction_prompt(req: ExtractionPromptRequest):
         except Exception as e:
             captured = _find_captured(e)
             if captured is None:
+                # Some real exception happened before the pipeline ever
+                # reached the LLM call -- log the full traceback, since a
+                # raised HTTPException doesn't get one printed by default
+                # (it's "handled", so FastAPI doesn't treat it as a crash),
+                # which made an earlier bug here silently undiagnosable
+                # from the access log line alone.
+                logger.exception("extraction/prompt failed for user_id=%s agent_id=%s", req.user_id, req.agent_id)
                 raise HTTPException(status_code=500, detail=f"prompt capture failed: {e}") from e
             return {"system_prompt": captured.system_prompt, "user_prompt": captured.user_prompt}
+    logger.error("extraction/prompt: pipeline returned without calling the LLM for user_id=%s agent_id=%s", req.user_id, req.agent_id)
     raise HTTPException(status_code=500, detail="extraction pipeline did not reach the LLM call")
 
 
