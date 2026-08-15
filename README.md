@@ -42,7 +42,9 @@ No existing SillyTavern, or a fully local setup with zero cloud dependency is wa
 | --- | --- |
 | [Prerequisites](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki/Prerequisites) | Host setup the memory system needs: Docker Engine, NVIDIA Container Toolkit. |
 | [Installing the Memory System](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki/Installing-the-Memory-System) | Adding this to an existing SillyTavern, plus a separate dev/prod split. |
-| [Memory System](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki/Memory-System) | How the three memory scopes, extraction, storage, and world lore work. |
+| [Configuring the Memory System](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki/Configuring-the-Memory-System) | Activating the extension, binding a world, and what triggers automatic extraction. |
+| [Managing Memories](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki/Managing-Memories) | The three memory scopes, building world lore, and browsing/editing/moving/deleting memories through the admin UI. |
+| [Memory System](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki/Memory-System) | How facts get remembered and sorted automatically, behind the scenes. |
 | [Local-Only Setup](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki/Local-Only-Setup) | An optional, fully-local alternative: the bundled llama.cpp model and SillyTavern, wired up together. |
 | [Changing the Model](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki/Changing-the-Model) | Swapping the local model and testing it. |
 | [Remote Access](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki/Remote-Access) | Reaching the bundled SillyTavern from another device over Tailscale. |

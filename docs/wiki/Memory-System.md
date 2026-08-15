@@ -1,64 +1,20 @@
 # Memory System
 
-Everything the model remembers about you, your characters, and your fictional worlds is stored and retrieved through [mem0](https://github.com/mem0ai/mem0) on top of [Qdrant](https://github.com/qdrant/qdrant), a vector database, both self-hosted. This works the same way regardless of which backend SillyTavern is actually talking to for chat — a cloud API, an aggregator, or a local model. Durable facts survive beyond what fits in the model's context window without resending or re-summarizing the whole past conversation. They are extracted once, stored, and pulled back later through a similarity search, then injected as a short line before the model replies. This page covers how that works and how to use it.
+Everything the model remembers about you, your characters, and your fictional worlds is stored and retrieved through [mem0](https://github.com/mem0ai/mem0) on top of [Qdrant](https://github.com/qdrant/qdrant), a vector database, both self-hosted. This works the same way regardless of which backend SillyTavern is actually talking to for chat — a cloud API, an aggregator, or a local model. Durable facts survive beyond what fits in the model's context window without resending or re-summarizing the whole past conversation. They are extracted once, stored, and pulled back later through a similarity search, then injected as a short line before the model replies. This page covers how that happens, automatically, behind the scenes — see [Configuring the Memory System](Configuring-the-Memory-System.md) for turning it on and shaping its behavior, and [Managing Memories](Managing-Memories.md) for browsing, editing, or moving memories by hand.
 
 The examples below use two people, Nova and Amber, two characters, Seraphina and Arthuria, and two worlds, Eldoria and Camelot, to make the scoping concrete. Nova roleplays with Seraphina, who is bound to Eldoria. Amber roleplays with Arthuria, who is bound to Camelot.
 
 ## The three memory scopes
 
-Every memory belongs to one of three scopes: character, shared, or world lore.
-
-| Scope | Example fact | Belongs to | Visible to |
-| --- | --- | --- | --- |
-| **Character** | "Seraphina promised to protect Nova through the night" | Nova | only Nova, only in conversations with Seraphina |
-| **Shared** | "Nova works as a veterinarian" | Nova | every character Nova talks to (optionally limited to one world, see below) |
-| **World lore** | "Eldoria's forest was corrupted by the Shadowfangs" | no one in particular | anyone talking about Eldoria, Nova or Amber alike |
-
-<p align="center">
-  <img src="diagrams/memory-system-1.svg" alt="Which scopes are visible in each conversation" width="600">
-</p>
-
-Nova, in a conversation with Seraphina in the Eldoria world, has access to memories about herself in Eldoria, her interaction with Seraphina in Eldoria, and the world Eldoria. Similarly, Amber's interactions with Arthuria are memorized for the Camelot world.
-
-When Nova talks to Cynthia in the Eldoria world, their conversation does not have access to the Seraphina memory.
-
-When Amber talks to Seraphina in the Eldoria world, their conversation only has access to the Eldoria world memory.
-
-Note: here we assume each character, like Seraphina, is bound to only one world, while a user, like Nova, can change between worlds.
+Every memory belongs to one of three scopes: character, shared, or world lore — see [Managing Memories](Managing-Memories.md#the-three-memory-scopes) for what each one means and who can see it, with examples.
 
 ## World lore
 
-The world lore layer holds facts about a fictional setting itself: Eldoria's geography and history, or Camelot's, are both examples. It replaces SillyTavern's built-in World Info system, which only matches lore into the prompt by literal keyword. This layer uses the same similarity search as the rest of the memory system, so a paraphrased question still finds the relevant lore.
-
-### Binding a world
-
-- A **character** picks up a world through its own card: the globe icon in SillyTavern's character panel, its "Primary Lorebook" picker. Seraphina's card is bound to Eldoria; Arthuria's is bound to Camelot.
-- A **persona** can also bind to a world independently, through the persona panel's own lorebook picker.
-- If both are set, the persona's binding takes priority. If neither is set (not recommended), the memories are not tied to any world.
-
-Whichever World Info file gets bound this way should stay empty of its own entries. SillyTavern's native keyword-matching still runs on a bound World Info file regardless of this memory system, so leaving entries in it means the same lore can get injected twice: once from mem0, once from SillyTavern's own matching. Keeping the binding but clearing its entries avoids that.
-
-### Building lore, two ways
-
-- **Passively**, during ordinary roleplay: facts about the world get picked out alongside the usual shared/character memory extraction (see "Sorting a memory" below), for whichever world is currently bound. This is how Eldoria's lore built up as Nova talked to Seraphina.
-- **Actively**, with a dedicated interviewer character: import `sillytavern/character-cards/world-weaver.json` into SillyTavern, keeping the name exactly **World Weaver**, and talk to it like any other character. It asks about a world one question at a time and writes straight into that world's lore. This is how Camelot's lore could be built from scratch before Amber ever starts roleplaying with Arthuria. Because it writes into the same store the passive path reads from, a lorebook built this way is available immediately in a fresh roleplay session bound to that world. It never pulls in memory context for its own replies, so building a new world stays a clean slate, and every exchange with it is saved right away.
-
-### Migrating an existing lorebook
-
-A world that already has lore in SillyTavern's native World Info format does not need to be re-typed through World Weaver. Open that world in SillyTavern's own World Info editor and click the brain icon next to the delete button in its toolbar. It reads every entry in that world and runs each one through the same extraction step as ordinary roleplay, writing the results straight into that world's lore, then offers to clear the World Info file's entries once it is done (see "Binding a world" above for why that matters).
-
-This is a one-time backfill, not something to repeat after every change, and it can take a while for a large world, since each entry runs through a real extraction step, one at a time.
+The world lore layer holds facts about a fictional setting itself: Eldoria's geography and history, or Camelot's, are both examples. It replaces SillyTavern's built-in World Info system, which only matches lore into the prompt by literal keyword. This layer uses the same similarity search as the rest of the memory system, so a paraphrased question still finds the relevant lore. See [Configuring the Memory System](Configuring-the-Memory-System.md#binding-a-world) for binding a world to a character or persona, and [Managing Memories](Managing-Memories.md#building-lore-two-ways) for the two ways lore actually gets built.
 
 ### A known limitation
 
 Shared memory tagged with a world only resurfaces for that same world, so a personal detail like "Nova's mount is the Aetherian Stride" (learned while talking to Seraphina in Eldoria) does not leak into a conversation with Arthuria in Camelot. The tradeoff: a whole exchange shares one world tag, so a genuinely universal fact, say Nova's real name, learned while talking to Seraphina also stops surfacing later when Nova talks to Arthuria. This is a known, accepted limitation.
-
-## Setting it up in SillyTavern
-
-1. Enable the extension (Manage Extensions → **Roleplay Memory**) — see [Installing the Memory System](Installing-the-Memory-System.md) if you have not yet.
-2. Bind a character or persona to a world if you want world lore for it (globe icon on the character panel, or the persona panel's own lorebook picker).
-3. To build lore deliberately or migrate an existing lorebook, see "Building lore, two ways" above.
-4. Browse, hand-edit, or delete any memory, including which world a shared memory is tagged with, at `http://localhost:8001/ui/`.
 
 ## How memories are extracted
 
@@ -66,16 +22,7 @@ A conversation does not become a memory verbatim. Say Nova tells Seraphina she w
 
 The extraction step relies on a large prompt of its own, around 8,000 tokens, and whichever model handles it needs enough context space to hold that comfortably. The bundled local setup keeps its context window at 16384 tokens or higher for exactly this reason (see [Changing the Model](Changing-the-Model.md)); a cloud model's context window is normally large enough on its own. A context window too small silently truncates the prompt, and extraction quietly breaks.
 
-## When extraction happens
-
-Exchanges are not sent off one at a time. SillyTavern's extension collects them in a buffer and sends the whole batch together as soon as any of these happens, whichever comes first:
-
-- The buffer's estimated size reaches about 800 tokens, estimated from character count rather than exact tokenization.
-- Two minutes pass with no new exchange added to the buffer.
-- The user says something like "remember this" or "memorize that," flushing right away.
-- The chat or character changes, flushing right away so buffered exchanges do not end up attributed to whatever character comes next.
-
-World Weaver is the one exception: every exchange with it flushes immediately instead of batching, since each interview answer is low-volume and deliberate, and waiting for a token or idle threshold risks losing one if the browser tab closes first.
+Extraction does not run on every single message either — see [Configuring the Memory System](Configuring-the-Memory-System.md#what-triggers-automatic-extraction) for what actually triggers it.
 
 ## Sorting a memory into shared or world lore
 
