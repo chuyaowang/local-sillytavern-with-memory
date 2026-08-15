@@ -14,7 +14,9 @@ Every memory belongs to one of three scopes: character, shared, or world lore.
 | **Shared** | "Nova works as a veterinarian" | Nova | every character Nova talks to (optionally limited to one world, see below) |
 | **World lore** | "Eldoria's forest was corrupted by the Shadowfangs" | no one in particular | anyone talking about Eldoria, Nova or Amber alike |
 
-![Which scopes are visible in each conversation](diagrams/memory-system-1.svg)
+<p align="center">
+  <img src="diagrams/memory-system-1.svg" alt="Which scopes are visible in each conversation" width="600">
+</p>
 
 Nova, in a conversation with Seraphina in the Eldoria world, has access to memories about herself in Eldoria, her interaction with Seraphina in Eldoria, and the world Eldoria. Similarly, Amber's interactions with Arthuria are memorized for the Camelot world.
 
@@ -62,7 +64,9 @@ The extraction step relies on a large prompt of its own, around 8,000 tokens, an
 
 Both facts from the example above start out saved as Seraphina-character memory, alongside anything actually specific to Nova and Seraphina's relationship. A second pass then checks each one: the veterinarian fact is general to Nova, so it moves to Nova's shared memory. The Shadowfangs fact is about the setting, so it moves to Eldoria's world lore. Anything left behind, say a private detail about how Seraphina reacted, stays as character memory. A fact only ever lives in one scope at a time.
 
-![How a conversation gets sorted into character, shared, and world memory](diagrams/memory-system-2.svg)
+<p align="center">
+  <img src="diagrams/memory-system-2.svg" alt="How a conversation gets sorted into character, shared, and world memory" width="600">
+</p>
 
 This second pass is best-effort. If it fails for any reason, the character memory from the first pass stays as is.
 
@@ -74,6 +78,8 @@ One model handles both roleplay generation and memory extraction, kept in sync a
 
 Qdrant stores every memory, across all three scopes, in one place, along with a smaller index that links named people, places, and terms mentioned in a memory back to that memory (see "The entity store" below). The embedding model that turns memories into searchable vectors, `nomic-embed-text-v1.5`, is served from the same local inference server as the chat models, so there is no separate embedding service to run.
 
+`nomic-embed-text-v1.5` only supports English. For other languages, a multilingual embedding model would need to replace it — two current options are [nomic-embed-text-v2-moe](https://huggingface.co/nomic-ai/nomic-embed-text-v2-moe-GGUF) (Nomic AI, about 100 languages, 768 dimensions, 512-token max input) and [EmbeddingGemma](https://huggingface.co/google/embeddinggemma-300m) (Google, about 100 languages, 768 dimensions; GGUF builds at [ggml-org/embeddinggemma-300M-GGUF](https://huggingface.co/ggml-org/embeddinggemma-300M-GGUF)). Switching is more than a config change: every existing memory's vector was computed with the old model, and vectors from two different models are not comparable, so existing memories would need to be re-embedded rather than just pointed at the new model.
+
 ## The entity store
 
 mem0 keeps a lightweight index linking named entities, people, places, quoted terms, mentioned in a memory back to that memory. "Eldoria," "Seraphina," and "Shadowfangs" would each get their own entry, pointing back to every memory that mentions them. It boosts search relevance when a later query mentions one of those entities directly.
@@ -82,4 +88,6 @@ mem0 keeps a lightweight index linking named entities, people, places, quoted te
 
 Before Seraphina's next reply, all three scopes are searched based on embedding closeness and merged into the prompt:
 
-![The three scopes merging into the prompt before a reply](diagrams/memory-system-3.svg)
+<p align="center">
+  <img src="diagrams/memory-system-3.svg" alt="The three scopes merging into the prompt before a reply" width="600">
+</p>

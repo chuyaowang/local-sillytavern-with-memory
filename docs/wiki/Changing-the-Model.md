@@ -1,6 +1,6 @@
 # Changing the Model
 
-One model serves both roleplay generation and memory extraction (see [Memory System](Memory-System.md)).
+One model serves both roleplay generation and memory extraction (see [Memory System](Memory-System.md)). This page is about that model. The embedding model is separate — see [Memory System's Storage section](Memory-System.md#storage) if you want to change it, for example to a multilingual one.
 
 ## Steps
 
