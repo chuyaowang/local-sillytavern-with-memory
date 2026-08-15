@@ -234,51 +234,65 @@ def _scope(user_id: str, agent_id: Optional[str]) -> dict:
     return {"user_id": user_id, "agent_id": agent_id or SHARED_AGENT_ID}
 
 
-CLASSIFICATION_PROMPT_TEMPLATE = """You are analyzing a conversation to identify two kinds of facts.
+CLASSIFICATION_PROMPT_TEMPLATE = """You are given a numbered list of memories extracted from a conversation between the
+user and a character. This system organizes memories into scopes:
 
-1. General facts about the user: true about the user regardless of who they are talking
-to -- personal preferences, biographical details, opinions, or traits. Examples:
-favorite food, job, hobbies, fears, birthday.
-
+1. Character memory: relationship and history specific to this one character, private
+to conversations with them -- these memories are already stored in that scope.
+2. Shared memory: general facts about the user, true regardless of which character
+they are talking to -- personal preferences, biographical details, opinions, or traits.
+Examples: favorite food, job, hobbies, fears, birthday.
 {world_section}
+Classify each memory in the list below: does it ALSO belong in shared memory, in world
+memory, or neither? A character's own personality, job, habits, or backstory, in-story
+events, and relationship dynamics between the user and this one character belong to
+neither -- they are not facts about the user or about the setting.
 
-NOT either category: anything specific to this particular character relationship --
-shared experiences, in-story events, relationship dynamics, or a character's own
-personality/traits, none of which are facts about the user or about the setting.
+Return ONLY valid JSON in this exact shape, using the memory numbers from the list:
+{{"shared": [1, 3], "world": [2]}}
 
-Return ONLY valid JSON in this exact shape:
-{{"shared_facts": ["fact one", "fact two"], "world_facts": ["fact one", "fact two"]}}
-
-If there are no facts of a given kind, return an empty list for it.
+If no memory belongs in a given scope, return an empty list for it.
 """
 
-WORLD_SECTION_TEMPLATE = """2. Facts about the setting/world "{world}": geography, history, factions, cultures,
-rules of magic or technology -- lore about the world itself, not about the user or
-about any one character's personality."""
+WORLD_SECTION_TEMPLATE = """
+3. World memory, for the world "{world}": lore about the fictional setting itself --
+geography, history, factions, cultures, rules of magic or technology. Not about the
+user, and not about any one character's own personality or traits.
+"""
 
 
-def classify_facts(mem: "Memory", messages: list[dict], world: Optional[str] = None) -> dict:
+def classify_facts(mem: "Memory", character_memories: list[str], world: Optional[str] = None) -> dict:
     # Best-effort: this is a secondary enrichment step layered on top of the
     # primary (always-succeeds) character-scoped write below, so any failure
-    # here is swallowed rather than breaking the add() call.
-    transcript = "\n".join(f"{m.get('role', 'user')}: {m.get('content', '')}" for m in messages)
+    # here is swallowed rather than breaking the add() call. Operates on the
+    # memory items Pass 1 (mem0's own extraction, in add_memory()) already
+    # produced, not the raw conversation -- a classification task over
+    # discrete, already-atomic facts, not a second independent extraction.
+    # Numbers in, numbers out: the model classifies by index rather than
+    # retyping fact text, so selected facts are looked up verbatim instead
+    # of trusting the model to reproduce them unchanged.
+    if not character_memories:
+        return {"shared_facts": [], "world_facts": []}
+    memory_list = "\n".join(f"{i + 1}. {m}" for i, m in enumerate(character_memories))
     world_section = WORLD_SECTION_TEMPLATE.format(world=world) if world else ""
     prompt = CLASSIFICATION_PROMPT_TEMPLATE.format(world_section=world_section)
     try:
         response = mem.llm.generate_response(
             messages=[
                 {"role": "system", "content": prompt},
-                {"role": "user", "content": transcript},
+                {"role": "user", "content": memory_list},
             ],
             response_format={"type": "json_object"},
         )
         data = json.loads(response)
-        shared_facts = data.get("shared_facts", [])
-        world_facts = data.get("world_facts", []) if world else []
-        return {
-            "shared_facts": [f for f in shared_facts if isinstance(f, str) and f.strip()],
-            "world_facts": [f for f in world_facts if isinstance(f, str) and f.strip()],
-        }
+        n = len(character_memories)
+
+        def _lookup(indices) -> list[str]:
+            return [character_memories[i - 1] for i in indices if isinstance(i, int) and 1 <= i <= n]
+
+        shared_facts = _lookup(data.get("shared", []))
+        world_facts = _lookup(data.get("world", [])) if world else []
+        return {"shared_facts": shared_facts, "world_facts": world_facts}
     except Exception:
         return {"shared_facts": [], "world_facts": []}
 
@@ -311,7 +325,8 @@ def add_memory(req: AddMemoryRequest):
     # Only classify when this write was character-scoped -- a call already
     # targeting the shared bucket has nothing further to route.
     if req.agent_id:
-        facts = classify_facts(mem, req.messages, world=req.world)
+        character_memories = [r["memory"] for r in result.get("results", []) if r.get("memory")]
+        facts = classify_facts(mem, character_memories, world=req.world)
         if facts["shared_facts"]:
             shared_messages = [{"role": "user", "content": fact} for fact in facts["shared_facts"]]
             mem.add(shared_messages, user_id=req.user_id, agent_id=SHARED_AGENT_ID, infer=False)
