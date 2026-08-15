@@ -37,3 +37,15 @@ flowchart TD
     f4 --> s2
     f2 --> s4
     f3 --> s4
+
+    classDef charStyle fill:#e0e7ff,stroke:#3730a3
+    classDef sharedStyle fill:#dcfce7,stroke:#166534
+    classDef worldStyle fill:#fef3c7,stroke:#92400e
+    class f1 charStyle
+    class f2 sharedStyle
+    class f3,f4 worldStyle
+
+    classDef eldoriaOutline stroke:#0e7490,stroke-width:3px
+    classDef camelotOutline stroke:#be123c,stroke-width:3px
+    class s1,s3,s4 eldoriaOutline
+    class s2 camelotOutline
