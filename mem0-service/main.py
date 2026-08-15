@@ -4,6 +4,7 @@ import re
 import time
 import urllib.error
 import urllib.request
+import uuid
 from typing import Optional
 
 from fastapi import FastAPI
@@ -13,6 +14,7 @@ from qdrant_client.models import FieldCondition, Filter, MatchValue
 from mem0 import Memory
 from mem0.configs.prompts import ADDITIVE_EXTRACTION_PROMPT, generate_additive_extraction_prompt
 from mem0.memory.utils import extract_json, parse_messages, remove_code_blocks
+from mem0.utils.entity_extraction import extract_entities_batch
 
 OLLAMA_BASE_URL = "http://ollama:11434"
 
@@ -323,6 +325,75 @@ If no world name was established yet, return {"worlds": []}.
 """
 
 
+def _link_entities(mem: "Memory", memory_id: str, text: str, filters: dict) -> None:
+    # mem0's own entity-store linking (named entities -> the memories that
+    # mention them, used for search-relevance boosting -- see CLAUDE.md's
+    # "entity store" notes) only runs as part of its infer=True extraction
+    # pipeline. The shared/world mirror writes below use infer=False (the
+    # text is already an atomic fact from Pass 1, re-extracting it would
+    # risk rewording it), which means they'd otherwise never get entity
+    # links at all. This replicates that step by calling mem0's own private
+    # entity-store helpers directly (not reimplementing their matching/
+    # embedding logic by hand) so it stays faithful to how mem0 itself
+    # links entities. Best-effort, same as the rest of this classification
+    # path -- any failure here doesn't affect the memory write itself.
+    try:
+        entities = extract_entities_batch([text])[0]
+    except Exception:
+        return
+    if not entities:
+        return
+
+    search_filters = {k: v for k, v in filters.items() if k in ("user_id", "agent_id", "run_id") and v}
+    try:
+        exact_matches = mem._existing_entities_by_text(search_filters)
+    except Exception:
+        exact_matches = {}
+
+    for entity_type, entity_text in entities:
+        try:
+            key = mem._normalize_entity_text(entity_text)
+            vector = mem.embedding_model.embed(entity_text, "add")
+        except Exception:
+            continue
+
+        match = exact_matches.get(key)
+        if not match:
+            try:
+                results = mem.entity_store.search_batch(
+                    queries=[entity_text], vectors_list=[vector], top_k=1, filters=search_filters,
+                )
+                candidates = results[0] if results else []
+                if candidates and candidates[0].score >= 0.95:
+                    match = candidates[0]
+            except Exception:
+                pass
+
+        if match:
+            try:
+                payload = match.payload or {}
+                linked = set(payload.get("linked_memory_ids", []))
+                linked.add(memory_id)
+                payload["linked_memory_ids"] = sorted(linked)
+                mem.entity_store.update(vector_id=match.id, vector=None, payload=payload)
+            except Exception:
+                pass
+        else:
+            try:
+                mem.entity_store.insert(
+                    vectors=[vector],
+                    ids=[str(uuid.uuid4())],
+                    payloads=[{
+                        "data": entity_text,
+                        "entity_type": entity_type,
+                        "linked_memory_ids": [memory_id],
+                        **search_filters,
+                    }],
+                )
+            except Exception:
+                pass
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -340,16 +411,24 @@ def add_memory(req: AddMemoryRequest):
         facts = classify_facts(mem, character_memories, world=req.world)
         if facts["shared_facts"]:
             shared_messages = [{"role": "user", "content": fact} for fact in facts["shared_facts"]]
-            mem.add(
+            shared_filters = {"user_id": req.user_id, "agent_id": SHARED_AGENT_ID}
+            shared_result = mem.add(
                 shared_messages,
                 user_id=req.user_id,
                 agent_id=SHARED_AGENT_ID,
                 infer=False,
                 metadata={"world": req.world or NO_WORLD},
             )
+            for r in shared_result.get("results", []):
+                if r.get("id") and r.get("memory"):
+                    _link_entities(mem, r["id"], r["memory"], shared_filters)
         if facts["world_facts"]:
             world_messages = [{"role": "user", "content": fact} for fact in facts["world_facts"]]
-            mem.add(world_messages, user_id=WORLD_USER_ID, agent_id=req.world, infer=False)
+            world_filters = {"user_id": WORLD_USER_ID, "agent_id": req.world}
+            world_result = mem.add(world_messages, user_id=WORLD_USER_ID, agent_id=req.world, infer=False)
+            for r in world_result.get("results", []):
+                if r.get("id") and r.get("memory"):
+                    _link_entities(mem, r["id"], r["memory"], world_filters)
 
     return result
 
