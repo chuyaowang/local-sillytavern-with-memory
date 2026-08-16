@@ -1,5 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="600" height="219" viewBox="0 0 600 219" font-family="system-ui, sans-serif">
-  <foreignObject x="0" y="0" width="600" height="219">
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="139" viewBox="0 0 600 139" font-family="system-ui, sans-serif">
+  <rect x="0" y="0" width="600" height="139" fill="#ffffff"/>
+  <foreignObject x="0" y="0" width="600" height="139">
     <div xmlns="http://www.w3.org/1999/xhtml" style="font-family: system-ui, sans-serif; color: #222;">
       <style>
         /* Copied verbatim from mem0-service/static/index.html's .card rules. */
