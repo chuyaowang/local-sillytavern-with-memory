@@ -4,10 +4,10 @@ AutoMemory is a self-hosted memory system for SillyTavern. From your conversatio
 
 ## Features
 
-- **Three memory scopes** — a **character** memory is private to one relationship between a persona and a character, a **shared** memory follows a person across every character they talk to, and **world lore** belongs to a fictional world itself, retrieved whenever a conversation happens in that world.
-- **Automatic extraction and injection** — memories get pulled out of a conversation and woven back into later replies on their own. Retrieval happens via vector similarity search, improving accuracy and relevance over keyword-based approaches.
+- **Three memory scopes** - a **character** memory is private to one relationship between a persona and a character, a **shared** memory follows a person across every character they talk to, and **world lore** belongs to a fictional world itself, retrieved whenever a conversation happens in that world.
+- **Automatic extraction and injection** - memories get pulled out of a conversation and woven back into later replies on their own. Retrieval happens via vector similarity search, improving accuracy and relevance over keyword-based approaches.
 - **Convenience Tools** - a specialized character to build new lorebooks from conversations into the AutoMemory system and a button to migrate existing lorebooks.
-- **A management UI** — while not strictly necessary, an interface to browse, hand-edit, move to a different scope, or delete any memory by hand is provided.
+- **A management UI** - while not strictly necessary, an interface to browse, hand-edit, move to a different scope, or delete any memory by hand is provided.
 
 See the [wiki](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki) for exactly how all of this works.
 
