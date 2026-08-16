@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="219" viewBox="0 0 600 219" font-family="system-ui, sans-serif">
+  <foreignObject x="0" y="0" width="600" height="219">
+    <div xmlns="http://www.w3.org/1999/xhtml" style="font-family: system-ui, sans-serif; color: #222;">
+      <style>
+        /* Copied verbatim from mem0-service/static/index.html's .card rules. */
+        .card { border: 1px solid #ddd; border-radius: 6px; padding: 0.75rem; box-sizing: border-box; }
+        .card .meta { font-size: 0.8rem; color: #666; margin-bottom: 0.4rem; }
+        .card .scope { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 3px; background: #e0e7ff; color: #3730a3; font-size: 0.75rem; margin-right: 0.5rem; }
+        .card .user { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 3px; background: #fef3c7; color: #92400e; font-size: 0.75rem; margin-right: 0.5rem; }
+        .card .world { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 3px; background: #dcfce7; color: #166534; font-size: 0.75rem; margin-right: 0.5rem; }
+        .card textarea { width: 100%; box-sizing: border-box; min-height: 3rem; font-family: inherit; font-size: 0.95rem; padding: 0.4rem; border: 1px solid #ddd; border-radius: 4px; resize: vertical; background: #fafafa; border-color: transparent; }
+        .card .actions { margin-top: 0.5rem; display: flex; gap: 0.5rem; }
+        .card .actions button { padding: 0.3rem 0.7rem; border: 1px solid #ccc; border-radius: 4px; background: white; cursor: pointer; font-size: 0.85rem; }
+        .card .actions button.danger { color: #b91c1c; border-color: #fca5a5; }
+      </style>
+      <div class="card">
+        <div class="meta">
+          <span class="scope">seraphina</span><span class="user">nova</span><span class="world">eldoria</span>8/15/2026, 9:42:11 PM
+        </div>
+        <textarea readonly="readonly">Nova works as a veterinarian and volunteers at the animal shelter on weekends.</textarea>
+        <div class="actions">
+          <button>Edit</button>
+          <button>Move</button>
+          <button class="danger">Delete</button>
+        </div>
+      </div>
+    </div>
+  </foreignObject>
+</svg>
