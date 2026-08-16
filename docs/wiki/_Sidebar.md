@@ -1,7 +1,5 @@
 ## Pages
 
----
-
 - [Home](Home.md)
 - [Prerequisites](Prerequisites.md)
 - [Installing the Memory System](Installing-the-Memory-System.md)

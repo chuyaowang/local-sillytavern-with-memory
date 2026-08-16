@@ -1,6 +1,6 @@
 # Local-Only Setup
 
-Nothing existing to add the memory system to, or a fully local setup with zero cloud dependency is wanted instead? This repo bundles a complete local stack — a local model through llama.cpp and SillyTavern itself, both wired up automatically — as an alternative to [Installing the Memory System](Installing-the-Memory-System.md). This assumes [Prerequisites](Prerequisites.md) are done: Docker Engine and the NVIDIA Container Toolkit both working.
+Nothing existing to add the memory system to, or a fully local setup with zero cloud dependency is wanted instead? This repo bundles a complete local stack — a local model through llama.cpp and SillyTavern itself, both wired up automatically — as an alternative to [Installing the Memory System](Installing-the-Memory-System.md) to an existing SillyTavern. This assumes [Prerequisites](Prerequisites.md) are done: Docker Engine and the NVIDIA Container Toolkit both working.
 
 llama.cpp was picked over Ollama for a measured generation-speed edge at comparable VRAM — see [Benchmarking](Benchmarking.md#backend-llamacpp-vs-ollama) for the numbers.
 
@@ -13,9 +13,9 @@ cd local-sillytavern-with-memory
 
 The model files are not in this repo (they are multi-gigabytes). Drop one in `models/`, then point `llama-cpp/models-preset.ini`'s `model =` line at its filename.
 
-The default model, tested to work, is [a quantized and abliterated Gemma 4 E4B model](https://huggingface.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive/blob/main/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf), which fits in the 6GB VRAM of an NVIDIA GTX 1660Ti card. The preset's `ctx-size` needs to stay at 16384 or higher — the memory extraction prompt alone is around 8,000 tokens, and a smaller context window will silently truncate it and break extraction (see [Memory System](Memory-System.md) for why).
+The default model, tested to work, is [a quantized and abliterated Gemma 4 E4B model](https://huggingface.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive/blob/main/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf), which fits in the 6GB VRAM of an NVIDIA GTX 1660Ti card. The preset's `ctx-size` needs to stay at 16384 or higher — the memory extraction prompt alone is around 8,000 tokens, and a smaller context window will silently truncate it and break extraction (see [Memory System Design](Memory-System.md) for why).
 
-See [Changing the Model](Changing-the-Model.md) if you want to switch to a different one later.
+See [Changing the Local Model](Changing-the-Model.md) if you want to switch to a different one later.
 
 ## 2. Set up SillyTavern's config
 

@@ -31,8 +31,8 @@ To understand what are the three scopes and how conversations use them, look at 
 
 - Nova (user), in a conversation with Seraphina (character) in the Eldoria world, has access to memories about herself in Eldoria, her interaction with Seraphina in Eldoria, and the world Eldoria. 
 - Similarly, another user Amber's interactions with another character Arthuria are memorized for the Camelot world.
-- When Nova talks to Cynthia, another character in the Eldoria world, their conversation does not have access to the Seraphina memory.
-- When Amber talks to Seraphina in the Eldoria world, their conversation only has access to the Eldoria world memory.
+- When Nova talks with Cynthia, another character in the Eldoria world, their conversation does not have access to the Seraphina memory.
+- When Amber talks with Seraphina in the Eldoria world, their conversation only has access to the Eldoria world memory.
 - When these memories are pulled from the database depends on the context of the conversation.
 
 ## Setup
@@ -49,7 +49,7 @@ Either way, [Prerequisites](https://github.com/chuyaowang/local-sillytavern-with
 
 ## Limitations and future development
 
-- The current embedding model only supports embedding English memories, but can be changed easily to a multi-lingual embedding model. See [Memory System](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki/Memory-System).
+- The current embedding model only supports embedding English memories, but can be changed easily to a multi-lingual embedding model (see [Memory System Design](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki/Memory-System)).
 - Support for Group chats has not been developed but is planned.
 - Designed originally for deployment on a local device with limited 6 GB VRAM, so memory extraction and conversation use the same model. An alternative is using two separate models.
 

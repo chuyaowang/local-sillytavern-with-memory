@@ -1,8 +1,8 @@
-# Local SillyTavern with Memory — Wiki
+# AutoMemory for SillyTavern — Documentation
 
-A self-hosted, backend-agnostic memory system for SillyTavern (mem0 + Qdrant), wired in through a plugin and extension so it works with whichever chat backend SillyTavern is already connected to. Also bundles a complete local chat stack (llama.cpp and SillyTavern) as an optional, zero-cloud-dependency way to run the whole thing.
+AutoMemory is a self-hosted, backend-agnostic memory system for SillyTavern (mem0 + Qdrant), wired in through a plugin and extension to work with whichever chat backend SillyTavern is already connected to. Also bundles a complete local chat stack (llama.cpp and SillyTavern) as an optional, zero-cloud-dependency to chat and store memory.
 
-This wiki is the detailed reference. The [README](https://github.com/chuyaowang/local-sillytavern-with-memory#readme) is the short version for anyone just browsing the repo.
+This wiki is the detailed reference. See the [README](https://github.com/chuyaowang/local-sillytavern-with-memory#readme) for a quick idea about this repo.
 
 ## Pages
 
@@ -22,4 +22,4 @@ This wiki is the detailed reference. The [README](https://github.com/chuyaowang/
 
 ## Source of truth
 
-These pages are written and version-controlled as plain markdown under `docs/wiki/` in the main repo. A workflow (`.github/workflows/publish-wiki.yml`) syncs them here automatically on every push to `main`. Edit the files there — edits made directly on this wiki page get overwritten on the next sync.
+These pages are written and version-controlled as plain markdown under `docs/wiki/` in the main repo. A workflow syncs them here automatically on every push to `main`. Edits made directly on this wiki page get overwritten on the next sync.

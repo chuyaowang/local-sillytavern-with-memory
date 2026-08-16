@@ -2,7 +2,9 @@
 
 This assumes [Prerequisites](Prerequisites.md) are done: Docker Engine and the NVIDIA Container Toolkit both working.
 
-The steps below add this memory system to a SillyTavern that is already running, with a chat connection already configured — whatever backend it already talks to keeps working exactly the same way, with nothing to change there. No existing SillyTavern, or a fully local setup with zero cloud dependency is wanted instead? See [Local-Only Setup](Local-Only-Setup.md) for that, as a further, optional alternative to the steps below.
+The steps below add this memory system to an existing SillyTavern installation and a chat connection already configured — whatever backend it already talks to keeps working exactly the same way, with nothing to change there.
+
+No existing SillyTavern, or a fully local setup with zero cloud dependency is wanted instead? See [Local-Only Setup](Local-Only-Setup.md) for a further, optional alternative to the steps below.
 
 ## 1. Clone the repo
 
@@ -32,11 +34,11 @@ llama.cpp here only serves the embedding model from the previous step — it is 
 
 ### If port 8001 is already taken
 
-mem0 needs to be reachable at `localhost:8001` on the host — the admin UI and a separately-installed SillyTavern both need to reach it from outside Docker, where the internal address `mem0:8001` used between containers does not resolve. If something else on the machine is already using port 8001, bringing mem0 up fails with a clear error (`port is already allocated`); nothing else in the stack is affected.
+mem0 needs to be reachable at `localhost:8001` on the host for the memory admin UI and a separately-installed SillyTavern to reach it. If something else on the machine is already using port 8001, bringing mem0 up fails with a clear error (`port is already allocated`).
 
-There's no need to find and stop whatever else is using it — the port number itself is arbitrary and easy to change. Open `docker-compose.yml`, find the `mem0` service's `ports:` line (`"127.0.0.1:8001:8001"`), and change the first `8001` to a free port, for example `"127.0.0.1:18001:8001"`. The second `8001` is the container's own internal port and should stay as is — it is what everything inside Docker keeps using regardless. After changing it, use that new port everywhere `localhost:8001` shows up elsewhere in these docs (the admin UI, and step 4 below if bringing a separate SillyTavern).
+If the port has been taken, open `docker-compose.yml`, find the `mem0` service's `ports:` line (`"127.0.0.1:8001:8001"`), and change the first `8001` to a free port, for example `"127.0.0.1:18001:8001"`. The second `8001` is the container's own internal port and should stay as is — it is what everything inside Docker keeps using regardless. After changing it, use that new port everywhere `localhost:8001` shows up elsewhere in these docs (the admin UI, and step 4 below if bringing a separate SillyTavern).
 
-If mem0 gets stuck restarting after a failed attempt like this, `docker compose up -d --force-recreate mem0` clears it.
+After changing it, run `docker compose up -d --force-recreate mem0` for a full restart of the mem0 service.
 
 ## 4. Add the plugin and extension to SillyTavern
 
@@ -47,7 +49,7 @@ Copy or symlink two folders from this cloned repo into the existing SillyTavern 
 
 In that SillyTavern's own `config.yaml`, set `enableServerPlugins: true` and restart it — server plugins only load at startup, so a running instance needs a restart to pick this up.
 
-If SillyTavern is a separate installation running on the same machine, open the copied `plugins/roleplay-memory/index.js` file and change `mem0:8001` near the top to `localhost:8001`, then restart SillyTavern. This setup assumes SillyTavern and mem0 are on the same machine — reaching mem0 from a SillyTavern on a different machine entirely is outside what this guide covers.
+Then open the copied `plugins/roleplay-memory/index.js` file and change `mem0:8001` near the top to `localhost:8001`, then restart SillyTavern. This setup assumes SillyTavern and mem0 are on the same machine — reaching mem0 from a SillyTavern on a different machine entirely is outside what this guide covers.
 
 ## 5. Turn on the extension
 
@@ -65,4 +67,4 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d qdrant-pro
 
 This shares llama.cpp with the default `qdrant`/`mem0` pair from step 3 (GPU/VRAM is the scarce resource, no reason to load the embedding model twice) but keeps memory data completely separate, reachable at `http://localhost:8011` instead of `:8001`. A single SillyTavern installation can switch between the two stores the same way as above — edit the address in its copied `plugins/roleplay-memory/index.js` and restart it, whenever switching is needed. To avoid editing and restarting every time, set up two separate SillyTavern installations instead, one permanently pointed at `:8001` and the other at `:8011`, and just use whichever one is needed.
 
-The [Local-Only Setup](Local-Only-Setup.md#setting-up-a-dev-vs-prod-environment) bundles its own SillyTavarn instead of relying on an external installation. This makes setting up the plug-in significantly easier and enables a shortcut to switch between the development and production environment.
+The [Local-Only Setup](Local-Only-Setup.md#setting-up-a-dev-vs-prod-environment) bundles its own SillyTavarn instead of relying on an external installation. This makes setting up the plug-in significantly easier and features a shortcut to switch between the development and production environment.

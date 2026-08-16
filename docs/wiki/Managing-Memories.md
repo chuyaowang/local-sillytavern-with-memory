@@ -20,40 +20,36 @@ Every memory belongs to one of three scopes: character, shared, or world lore.
 
 Nova, in a conversation with Seraphina in the Eldoria world, has access to memories about herself in Eldoria, her interaction with Seraphina in Eldoria, and the world Eldoria. Similarly, Amber's interactions with Arthuria are memorized for the Camelot world.
 
-When Nova talks to Cynthia in the Eldoria world, their conversation does not have access to the Seraphina memory.
+When Nova talks with Cynthia in the Eldoria world, their conversation does not have access to the Seraphina memory.
 
-When Amber talks to Seraphina in the Eldoria world, their conversation only has access to the Eldoria world memory.
+When Amber talks with Seraphina in the Eldoria world, their conversation only has access to the Eldoria world memory.
 
 Note: here we assume each character, like Seraphina, is bound to only one world, while a user, like Nova, can change between worlds.
 
-## Building lore, two ways
+## Building the world lore, two ways
 
 - **Passively**, during ordinary roleplay: facts about the world get picked out alongside the usual shared/character memory extraction (see [Memory System's "Sorting a memory" section](Memory-System.md#sorting-a-memory-into-shared-or-world-lore)), for whichever world is currently bound. This is how Eldoria's lore built up as Nova talked to Seraphina.
-- **Actively**, with a dedicated interviewer character: import `sillytavern/character-cards/world-weaver.json` into SillyTavern, keeping the name exactly **World Weaver**, and talk to it like any other character. It asks about a world one question at a time and writes straight into that world's lore. This is how Camelot's lore could be built from scratch before Amber ever starts roleplaying with Arthuria. Because it writes into the same store the passive path reads from, a lorebook built this way is available immediately in a fresh roleplay session bound to that world. It never pulls in memory context for its own replies, so building a new world stays a clean slate, and every exchange with it is saved right away.
-
-Note that World Weaver performs memory extraction after each conversation, since each interview answer is low-volume and deliberate, and waiting for a token or idle threshold risks losing one if the browser tab closes first.
+- **Actively**, with a dedicated interviewer character: import `sillytavern/character-cards/world-weaver.json` into SillyTavern, keeping the name exactly **World Weaver**, and talk to it like any other character. It asks about a world one question at a time and writes straight into that world's lore. This is how Camelot's lore could be built from scratch before Amber ever starts talking with Arthuria. A lorebook built this way is available immediately in a fresh conversation bound to that world. It never pulls in existing memory during the conversation, so irrelevant context stays outside of the interview. The World Weaver performs memory extraction after each conversation exchange, since each interview answer is informative for the world lore.
 
 ## Migrating an existing lorebook
 
-A world that already has lore in SillyTavern's native World Info format does not need to be re-typed through World Weaver. Open that world in SillyTavern's own World Info editor and click the brain icon next to the delete button in its toolbar. It reads every entry in that world and runs each one through the same extraction step as ordinary roleplay, writing the results straight into that world's lore, then offers to clear the World Info file's entries once it is done (see [Configuring the Memory System's "Binding a world" section](Configuring-the-Memory-System.md#binding-a-world) for why that matters).
+A world that already has lore in SillyTavern's native World Info format does not need to be re-typed through World Weaver. Open that world in SillyTavern's own World Info editor and click the brain icon next to the delete button in its toolbar. It reads every entry in that world and runs each one through the same extraction step as ordinary roleplay, writing the results straight into that world's lore, then offers to clear the World Info file's entries once it is done. This avoids two memory systems injecting duplicate memories into the context (see [Configuring the Memory System's "Binding a world" section](Configuring-the-Memory-System.md#binding-a-world)).
 
-This is a one-time backfill, not something to repeat after every change, and it can take a while for a large world, since each entry runs through a real extraction step, one at a time.
+This is a one-time backfill, not something to repeat after every change, and it can take a while for a large world, since each entry needs to be re-extracted.
 
 ## Browsing and editing memories
 
-The memory manager is a small admin page at `http://localhost:8001/ui/`, local only and not reachable over Tailscale, by design (see [Remote Access](Remote-Access.md)).
+The memory manager is a small admin page at `http://localhost:8001/ui/`, local only and not reachable over Tailscale (see [Remote Access](Remote-Access.md)).
 
-1. Pick a `user_id` from the first dropdown — every memory belongs to one, including world lore, which is filed under a fixed placeholder user called `world` instead of a real person.
+1. Pick a `user_id` from the first dropdown. Every memory belongs to one, including world lore, which is filed under a fixed placeholder user called `world` instead of a real person.
 2. Pick an `agent_id` to narrow to one scope (a character, `shared`, or a world name), or leave it on "All scopes" to see everything for that user_id at once.
 3. Optionally type a search — leaving it blank lists every memory in the selected scope; typing something searches by embedding closeness instead of exact text.
 4. Click **Load**.
 
-Each card shows the memory's text alongside its scope, linked user, and world tag if it has one. **Edit** unlocks the text for hand-editing — **Save** stores the new wording and updates how it is found by search. **Delete** removes it permanently, with a confirmation prompt first.
+Each card shows the memory's text alongside its scope, linked user, and world tag if it has one. **Edit** unlocks the text for hand-editing; **Save** stores the new wording and updates how it is found by search; **Delete** removes it permanently, with a confirmation prompt first.
 
-## Moving a memory to a different scope
-
-**Move** reassigns which user, character, or world a memory is filed under, without deleting and re-extracting it — useful for fixing a memory that landed in the wrong scope, or reattributing something after the fact. Clicking it reveals two dropdowns, populated from every user and character/world that already exists anywhere in the store. Pick the target and confirm.
+**Move** reassigns which user, character, or world a memory is filed under, without deleting and re-extracting it, useful for fixing a memory that landed in the wrong scope, or reattributing something after the fact. Clicking it reveals two dropdowns, populated from every user and character/world that already exists anywhere in the store. Pick the target and confirm.
 
 ## Bulk find-and-replace
 
-Below the memory list, **Replace All** does a plain, case-sensitive, literal text substitution across every memory in the currently-selected scope (or every scope for that user_id, if "All scopes" is selected). It only touches memories that literally contain the search text — a paraphrased mention elsewhere will not be caught. Useful for a name change or correcting a consistent typo across many memories at once; each affected memory gets its search representation updated the same way a hand edit does.
+Below the memory list, **Replace All** does a plain, case-sensitive, literal text substitution across every memory in the currently-selected scope (or every scope for that user_id, if "All scopes" is selected). It only touches memories that literally contain the search text, so a paraphrased mention elsewhere will not be caught. Useful for a name change or correcting a consistent typo across many memories at once; each affected memory will then be updated.

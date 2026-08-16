@@ -1,6 +1,6 @@
 # SillyTavern Troubleshooting
 
-Non-default SillyTavern settings and gotchas specific to this project, applied by hand in the UI. These settings live in `sillytavern/data/` and `sillytavern-prod/data/`, which are gitignored runtime state, so this page is the only record of why they're set this way. Settings below are applied identically in both the dev (`:8000`) and prod (`:8010`) instances.
+Non-default SillyTavern settings and gotchas specific to this project, applied by hand in the UI. These settings live in `sillytavern/data/` and `sillytavern-prod/data/`, which are gitignored, so this page is the only record of why they're set this way. Settings below are applied identically in both the dev (`:8000`) and prod (`:8010`) instances.
 
 ## A reply runs past its turn and echoes a fake "next reply" header
 
