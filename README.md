@@ -61,9 +61,9 @@ Either way, [Prerequisites](https://github.com/chuyaowang/local-sillytavern-with
 | [Installing the Memory System](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki/Installing-the-Memory-System) | Adding AutoMemory to a SillyTavern you already have running. |
 | [Configuring the Memory System](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki/Configuring-the-Memory-System) | Turning memory on and shaping how it behaves. |
 | [Managing Memories](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki/Managing-Memories) | Browsing, editing, and building memories by hand. |
-| [Memory System](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki/Memory-System) | How memories get created and sorted automatically. |
+| [Memory System Design](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki/Memory-System) | How memories get created and sorted automatically. |
 | [Local-Only Setup](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki/Local-Only-Setup) | A ready-to-deploy setup with no cloud dependency. |
-| [Changing the Model](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki/Changing-the-Model) | Swapping in a different local model. |
+| [Changing the Local Model](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki/Changing-the-Model) | Swapping in a different local model. |
 | [Remote Access](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki/Remote-Access) | Reaching your setup from another device. |
 | [SillyTavern Troubleshooting](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki/SillyTavern-Troubleshooting) | Common problems and their fixes. |
 | [Benchmarking](https://github.com/chuyaowang/local-sillytavern-with-memory/wiki/Benchmarking) | Why the defaults were chosen, backed by real numbers. |
