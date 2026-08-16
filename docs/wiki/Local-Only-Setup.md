@@ -2,6 +2,8 @@
 
 Nothing existing to add the memory system to, or a fully local setup with zero cloud dependency is wanted instead? This repo bundles a complete local stack — a local model through llama.cpp and SillyTavern itself, both wired up automatically — as an alternative to [Installing the Memory System](Installing-the-Memory-System.md). This assumes [Prerequisites](Prerequisites.md) are done: Docker Engine and the NVIDIA Container Toolkit both working.
 
+llama.cpp was picked over Ollama for a measured generation-speed edge at comparable VRAM — see [Benchmarking](Benchmarking.md#backend-llamacpp-vs-ollama) for the numbers.
+
 ## 1. Clone the repo and bring your own model
 
 ```bash

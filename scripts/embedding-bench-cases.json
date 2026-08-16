@@ -1,0 +1,95 @@
+{
+  "description": "Synthetic test cases for scripts/bench-embedding-models.py. Each case has a base memory plus four variants: a paraphrase (same fact, reworded), an opposite (contradicts the base), a same-topic-different-fact (related subject, distinct fact), and an unrelated fact (no topical overlap). Content mirrors this project's own example cast (Nova/Seraphina/Amber/Arthuria/Cynthia, worlds Eldoria/Camelot) and spans all three memory scopes -- character, shared, world -- to match real extraction output. Each case also has a 'query' -- an in-conversation roleplay line that raises the base memory's topic the way a real prompt would, without restating the fact itself -- used for the retrieval-realistic test: how well a query finds the base fact vs. its paraphrase, opposite, same-topic-different fact, and an unrelated fact, mirroring mem0's actual search() usage (embedding a conversation turn to retrieve stored memories, not embedding one memory to find another).",
+  "cases": [
+    {
+      "id": "seraphina-protects-nova",
+      "scope": "character",
+      "query": "Nova wonders aloud whether Seraphina will really be there to guard her back when things get dangerous.",
+      "base": "Seraphina promised to protect Nova after their first battle together",
+      "paraphrase": "Seraphina made a vow to keep Nova safe following the battle they fought side by side",
+      "opposite": "Seraphina refused to protect Nova, telling her she was on her own",
+      "same_topic_different_fact": "Seraphina taught Nova how to wield a sword",
+      "unrelated": "Amber collects rare seashells from the coast near Camelot"
+    },
+    {
+      "id": "nova-trusts-seraphina",
+      "scope": "character",
+      "query": "Seraphina asks Nova if there's anything on her mind she hasn't told anyone else.",
+      "base": "Nova trusts Seraphina with her deepest secrets",
+      "paraphrase": "Nova feels safe confiding her most private thoughts to Seraphina",
+      "opposite": "Nova no longer trusts Seraphina and keeps her secrets hidden from her",
+      "same_topic_different_fact": "Nova argues with Seraphina about hunting methods",
+      "unrelated": "Arthuria's sword was forged from a fallen star"
+    },
+    {
+      "id": "amber-arthuria-training",
+      "scope": "character",
+      "query": "Arthuria mentions she's tired and asks Amber if they should keep up their usual training routine.",
+      "base": "Amber and Arthuria trained together every morning at dawn",
+      "paraphrase": "Amber and Arthuria met each morning at sunrise to train",
+      "opposite": "Amber and Arthuria stopped training together after a falling out",
+      "same_topic_different_fact": "Amber and Arthuria spar every evening instead of the morning",
+      "unrelated": "Nova works as a veterinarian who specializes in injured owls"
+    },
+    {
+      "id": "user-vet-birds",
+      "scope": "shared",
+      "query": "Nova asks the user what kind of work they do for a living.",
+      "base": "The user works as a veterinarian who specializes in treating injured birds",
+      "paraphrase": "The user's job is a vet, focused on healing birds that have been hurt",
+      "opposite": "The user does not work with animals at all and has never treated a bird",
+      "same_topic_different_fact": "The user is studying to become a veterinarian but hasn't finished school yet",
+      "unrelated": "Camelot's knights hold a jousting tournament every autumn"
+    },
+    {
+      "id": "user-coffee",
+      "scope": "shared",
+      "query": "Seraphina offers to make the user a hot drink before they head out for the day.",
+      "base": "The user likes to drink coffee every morning before work",
+      "paraphrase": "The user mentioned that coffee is the first thing they have each morning before heading to work",
+      "opposite": "The user dislikes coffee and never drinks it in the morning",
+      "same_topic_different_fact": "The user prefers tea in the evening to wind down",
+      "unrelated": "Seraphina keeps a hidden shrine dedicated to an ancient forest spirit"
+    },
+    {
+      "id": "user-name-lake",
+      "scope": "shared",
+      "query": "Amber asks the user what their name is and where they call home.",
+      "base": "The user's real name is Michael and they live near a lake",
+      "paraphrase": "The user goes by the name Michael and their home is close to a lake",
+      "opposite": "The user's name is not Michael, and they live far from any body of water",
+      "same_topic_different_fact": "The user's sibling is named Michael and lives in a different city",
+      "unrelated": "Eldoria's forest is home to a rare glowing moss that only blooms at night"
+    },
+    {
+      "id": "eldoria-forest",
+      "scope": "world",
+      "query": "The user asks Nova to describe what the land of Eldoria actually looks like.",
+      "base": "Eldoria is a vast, ancient forest filled with glowing moss and hidden ruins",
+      "paraphrase": "Eldoria is described as an old, sprawling woodland covered in luminous moss and forgotten ruins",
+      "opposite": "Eldoria is a barren desert with no plant life or ruins anywhere",
+      "same_topic_different_fact": "Eldoria's forest is home to a reclusive tribe of elves who guard its ruins",
+      "unrelated": "The user has a daughter named Sara who loves painting"
+    },
+    {
+      "id": "camelot-council",
+      "scope": "world",
+      "query": "Arthuria explains how justice is carried out in Camelot when two knights disagree.",
+      "base": "Camelot is ruled by a council of knights who settle disputes through trial by combat",
+      "paraphrase": "In Camelot, a council made up of knights governs, and conflicts are resolved through combat trials",
+      "opposite": "Camelot has no knights or council; it is governed peacefully by a single elected mayor",
+      "same_topic_different_fact": "Camelot's knights hold an annual tournament each autumn to determine the strongest fighter",
+      "unrelated": "Nova has a scar on her left hand from a childhood accident"
+    },
+    {
+      "id": "aetherian-stride",
+      "scope": "world",
+      "query": "Cynthia asks if there's any creature in the realm fast enough to outrun a storm.",
+      "base": "The Aetherian Stride is a legendary mount said to run faster than the wind itself",
+      "paraphrase": "Legend describes the Aetherian Stride as a mount so swift it outpaces the wind",
+      "opposite": "The Aetherian Stride is a slow, lumbering beast unable to outrun even a walking person",
+      "same_topic_different_fact": "The Aetherian Stride can only be summoned during a full moon",
+      "unrelated": "Arthuria dislikes crowded taverns and prefers to eat alone"
+    }
+  ]
+}

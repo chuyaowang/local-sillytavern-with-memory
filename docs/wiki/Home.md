@@ -17,6 +17,7 @@ This wiki is the detailed reference. The [README](https://github.com/chuyaowang/
 | [Changing the Model](Changing-the-Model.md) | Swapping the local model, what the test script checks, and models verified so far. |
 | [Remote Access](Remote-Access.md) | Reaching the bundled SillyTavern from another device over Tailscale. |
 | [SillyTavern Troubleshooting](SillyTavern-Troubleshooting.md) | Settings and gotchas specific to this project, and why they're needed. |
+| [Benchmarking](Benchmarking.md) | Why llama.cpp over Ollama and which embedding model to pick, backed by real numbers. |
 | [Third-Party Components](Third-Party-Components.md) | Licenses for everything this project wires together. |
 
 ## Source of truth
